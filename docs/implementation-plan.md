@@ -231,7 +231,7 @@ Lock-файл: `./gradlew dependencies --write-locks`.
 data class Config(
     val port: Int,
     val dbUrl: String, val dbUser: String, val dbPassword: String,
-    val maxToken: String, val maxBotUsername: String, val maxApiBase: String,
+    val maxToken: String, val maxApiBase: String,
     val gigaAuthKey: String, val gigaScope: String, val gigaModel: String,
     val corsOrigin: String,          // https://<user>.github.io
     val adminUserIds: Set<Long>,
@@ -252,7 +252,6 @@ data class Config(
 | `DB_URL` | `jdbc:postgresql://localhost:5432/mkd` |
 | `DB_USER` / `DB_PASSWORD` | `mkd` / `mkd` |
 | `MAX_BOT_TOKEN` | `""` |
-| `MAX_BOT_USERNAME` | `""` |
 | `MAX_API_BASE` | `https://platform-api2.max.ru` |
 | `GIGACHAT_AUTH_KEY` | `""` |
 | `GIGACHAT_SCOPE` | `GIGACHAT_API_PERS` |
@@ -536,8 +535,6 @@ volumes:
 ```
 # Токен бота MAX (выдают организаторы / @MasterBot). ОБЯЗАТЕЛЬНО
 MAX_BOT_TOKEN=
-# Ник бота без @, оканчивается на _bot. ОБЯЗАТЕЛЬНО (нужен для диплинка в мини-приложение)
-MAX_BOT_USERNAME=
 MAX_API_BASE=https://platform-api2.max.ru
 # Ключ авторизации GigaChat (Authorization key из личного кабинета developers.sber.ru). ОБЯЗАТЕЛЬНО для LLM
 GIGACHAT_AUTH_KEY=
@@ -644,11 +641,16 @@ class Bot(private val max: MaxBotClient /* + сервисы в следующи�
 ```
 
 `Application.kt`: `val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)`;
-если `cfg.maxToken` не пуст — `scope.launch { bot.pollLoop() }`, иначе
-лог-предупреждение «MAX_BOT_TOKEN не задан, бот выключен».
+если `cfg.maxToken` не пуст — вызвать `max.me()`, взять из ответа
+`username` (ник бота для диплинков, отдельной переменной окружения нет) и
+сохранить в `lateinit var botUsername: String` верхнего уровня в
+`MaxBotClient.kt`; затем `scope.launch { bot.pollLoop() }`. Если `me()`
+упал — приложение падает с понятной ошибкой «неверный MAX_BOT_TOKEN».
+Если токен пуст — лог-предупреждение «MAX_BOT_TOKEN не задан, бот
+выключен».
 
 **Критерий готовности:** с реальным токеном — лог при старте печатает
-результат `me()` (имя бота); сообщение боту в MAX возвращается эхом. Без
+результат `me()` и `botUsername`; сообщение боту в MAX возвращается эхом. Без
 токена приложение стартует и пишет предупреждение.
 
 **Коммит:** `feat(bot): клиент MAX Bot API и long polling`
@@ -912,7 +914,7 @@ Callback-payload'ы (полный список на весь проект, фо�
 
 Link на мини-апп (единая функция, используется во всех шагах):
 ```kotlin
-fun appLink(cfg: Config, startParam: String) = "https://max.ru/${cfg.maxBotUsername}?startapp=$startParam"
+fun appLink(startParam: String) = "https://max.ru/$botUsername?startapp=$startParam"   // botUsername — из me() (S4)
 // startParam: "act_{id}" или "refusal_{id}" (только [A-Za-z0-9_-])
 ```
 
@@ -1064,7 +1066,7 @@ HttpTimeout 60 с. Если `!enabled` — все вызовы сразу кид
 - В обоих случаях сообщение председателю: «Распознано позиций: N. Проверьте
   их и откройте сбор замечаний жителей.» / «Не удалось распознать акт
   автоматически — введите позиции вручную, это займёт пару минут.» + link
-  `[Открыть акт]` (`appLink(cfg, "act_$id")`).
+  `[Открыть акт]` (`appLink("act_$id")`).
 
 Демо-акт `demo/act-demo.pdf` генерируется один раз тестом-генератором
 `DemoActPdfTest` (тело теста выполняется только при `GEN_DEMO=1`, иначе
@@ -1806,9 +1808,9 @@ README — ровно разделы из hackathon-brief §«Формат сд�
 только в `.env` (не в git); в `.env.example` — пустое значение с
 комментарием; в README — где взять.
 
-1. **Токен бота MAX (`MAX_BOT_TOKEN`) и ник бота (`MAX_BOT_USERNAME`).**
-   Выдают организаторы или `@MasterBot` → `/create`. Ник нельзя сменить
-   после создания — выбрать осознанно. Нужен к S4.
+1. **Токен бота MAX (`MAX_BOT_TOKEN`).** Выдают организаторы или
+   `@MasterBot` → `/create`. Ник бота бэкенд берёт сам из `GET /me`. Ник
+   нельзя сменить после создания — выбрать осознанно. Нужен к S4.
 2. **URL мини-аппа в настройках бота.** После первого деплоя Pages (S6)
    указать в `@MasterBot` адрес вида `https://<user>.github.io/MaxHackathon/`.
 3. **GitHub Pages.** Репозиторий должен быть публичным (или тариф с Pages
