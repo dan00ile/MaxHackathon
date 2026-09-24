@@ -218,7 +218,7 @@ dependencies {
     implementation("io.ktor:ktor-server-status-pages:$ktor")
     implementation("io.ktor:ktor-server-call-logging:$ktor")
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktor")
-    implementation("io.ktor:ktor-client-cio:$ktor")
+    implementation("io.ktor:ktor-client-java:$ktor")   // не CIO: CIO ловит 503 на platform-api2.max.ru через прокси, JDK HttpClient — 200
     implementation("io.ktor:ktor-client-content-negotiation:$ktor")
     implementation("org.jetbrains.exposed:exposed-core:$exposed")
     implementation("org.jetbrains.exposed:exposed-jdbc:$exposed")
@@ -639,7 +639,8 @@ fun cb(text: String, payload: String) = Button("callback", text, payload = paylo
 fun link(text: String, url: String) = Button("link", text, url = url)
 
 class MaxBotClient(private val token: String, private val base: String) {
-    // HttpClient(CIO) { install(ContentNegotiation){ json(AppJson) }; install(HttpTimeout){ requestTimeoutMillis = 45_000 } }
+    // HttpClient(Java) {   (движок Java — для всех HTTP-клиентов проекта, включая GigaChat)
+    // install(ContentNegotiation){ json(AppJson) }; install(HttpTimeout){ requestTimeoutMillis = 45_000 } }
     suspend fun me(): JsonObject
     suspend fun getUpdates(marker: Long?): UpdateList
     suspend fun sendText(userId: Long, text: String, buttons: List<List<Button>> = emptyList())
