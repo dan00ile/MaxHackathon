@@ -174,8 +174,27 @@ README.md
 `backend/src/main/kotlin/mkd/Application.kt`, `backend/src/main/kotlin/mkd/Config.kt`,
 `backend/src/main/resources/logback.xml`, `.gitignore`.
 
-`settings.gradle.kts`:
+`settings.gradle.kts` — Google-зеркало Maven Central стоит первым: прямой
+`repo1.maven.org` отвечает 429 на общих IP облачных сессий и CI. Зеркало
+отдаёт те же артефакты; если в нём чего-то нет, Gradle возьмёт из
+следующего репозитория:
 ```kotlin
+val centralMirror = "https://maven-central.storage-download.googleapis.com/maven2/"
+
+pluginManagement {
+    repositories {
+        maven("https://maven-central.storage-download.googleapis.com/maven2/")
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        maven(centralMirror)
+        mavenCentral()
+    }
+}
+
 rootProject.name = "backend"
 ```
 
@@ -188,8 +207,6 @@ plugins {
     kotlin("plugin.serialization") version "2.1.21"
     application
 }
-
-repositories { mavenCentral() }
 
 val ktor = "3.1.3"
 val exposed = "0.61.0"
@@ -218,6 +235,9 @@ application { mainClass.set("mkd.ApplicationKt") }
 tasks.test { useJUnitPlatform() }
 dependencyLocking { lockAllConfigurations() }
 ```
+
+Блока `repositories` в `build.gradle.kts` нет: репозитории задаются только
+в `settings.gradle.kts`.
 
 Exposed — именно ветка `0.61.x` (пакеты `org.jetbrains.exposed.sql.*`).
 Не бери Exposed 1.x — там другие пакеты.
