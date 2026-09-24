@@ -1,0 +1,34 @@
+plugins {
+    kotlin("jvm") version "2.1.21"
+    kotlin("plugin.serialization") version "2.1.21"
+    application
+}
+
+repositories { mavenCentral() }
+
+val ktor = "3.1.3"
+val exposed = "0.61.0"
+
+dependencies {
+    implementation("io.ktor:ktor-server-netty:$ktor")
+    implementation("io.ktor:ktor-server-content-negotiation:$ktor")
+    implementation("io.ktor:ktor-server-cors:$ktor")
+    implementation("io.ktor:ktor-server-status-pages:$ktor")
+    implementation("io.ktor:ktor-server-call-logging:$ktor")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:$ktor")
+    implementation("io.ktor:ktor-client-cio:$ktor")
+    implementation("io.ktor:ktor-client-content-negotiation:$ktor")
+    implementation("org.jetbrains.exposed:exposed-core:$exposed")
+    implementation("org.jetbrains.exposed:exposed-jdbc:$exposed")
+    implementation("org.jetbrains.exposed:exposed-java-time:$exposed")
+    implementation("org.postgresql:postgresql:42.7.5")
+    implementation("com.zaxxer:HikariCP:6.3.0")
+    implementation("com.github.librepdf:openpdf:1.3.43")
+    implementation("ch.qos.logback:logback-classic:1.5.18")
+    testImplementation(kotlin("test"))
+}
+
+kotlin { jvmToolchain(21) }
+application { mainClass.set("mkd.ApplicationKt") }
+tasks.test { useJUnitPlatform() }
+dependencyLocking { lockAllConfigurations() }
