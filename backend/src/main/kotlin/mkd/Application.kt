@@ -27,6 +27,7 @@ private val log = LoggerFactory.getLogger("Application")
 fun main() {
     val cfg = Config.fromEnv()
     Db.init(cfg)
+    Seed.run()
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     if (cfg.maxToken.isNotBlank()) {
