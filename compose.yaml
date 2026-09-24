@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mkd
+      POSTGRES_USER: mkd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mkd"]
+      interval: 3s
+      retries: 20
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/mkd
+      DB_USER: mkd
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: ["8080:8080"]
+    volumes: [files:/data/files]
+    depends_on:
+      db: { condition: service_healthy }
+volumes:
+  pgdata:
+  files:
