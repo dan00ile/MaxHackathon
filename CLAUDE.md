@@ -1,6 +1,32 @@
 # MaxHackathon — agent instructions
 
-<!-- TODO: project context to be added here by the user (goals, stack, constraints). -->
+## Project context
+
+Хакатон-проект: бот в MAX для приёмки актов работ по содержанию/ремонту МКД
+(приказ Минстроя № 318/пр). Председатель совета МКД получает акт, собирает
+замечания жителей, LLM формализует их в юридический черновик, председатель
+подписывает акт (Госключ) или формирует мотивированный отказ — всё в срок
+10/30 дней, без юриста.
+
+Перед началом любой задачи по продукту читай:
+
+- [`docs/requirements.md`](docs/requirements.md) — актуальные системные
+  требования: роли, MoSCoW, функциональные/нефункциональные требования,
+  машина состояний акта, модель данных, интеграции. Это первичный источник
+  правды для того, что нужно реализовать.
+- [`docs/tasks.md`](docs/tasks.md) — снэпшот канбан-доски (модули, статусы,
+  зависимости задач); актуальный статус — в `docs/original/kanban-tasks.xlsx`.
+- [`docs/idea.md`](docs/idea.md) и [`docs/pitch-analysis.md`](docs/pitch-analysis.md) —
+  зачем сделаны те или иные развилки (Госключ вместо своей подписи,
+  обязательное фотоподтверждение, чек-лист вместо свободного текста и т.д.) и
+  как продукт защищается перед жюри. Читай, если решение кажется избыточным —
+  скорее всего у него есть нормативное или продуктовое обоснование здесь.
+- [`docs/requirements-changelog.md`](docs/requirements-changelog.md) — история
+  правок требований; полезно, если формулировка в другом документе (например,
+  в `docs/original/system-requirements-v1.pdf`) расходится с requirements.md —
+  requirements.md всегда приоритетнее.
+
+<!-- TODO: стек, репозиторий/CI, среда запуска бота — добавить по мере появления кода. -->
 
 ## Bundled skills
 
@@ -48,6 +74,24 @@ much less main-context budget than the vanilla equivalent:
 See `.claude/skills/cavecrew/SKILL.md` for the full decision table (when to
 use cavecrew vs. vanilla `Explore`/`Plan`/review). Do not use `cavecrew-builder`
 for new features, new files, or cross-file refactors — it hard-refuses 3+ file scope.
+
+### caveman + ponytail together
+
+The two compose freely, no overlap: caveman shrinks what you *say*, ponytail
+shrinks what you *build*. Caveman leaves code byte-for-byte exact; ponytail
+never touches prose style. Default posture in this repo: ponytail always on
+for code, caveman only when the user asks — running both at once just means
+terse talk about minimal code.
+
+### Slash commands
+
+Every bundled skill is also wired as a project slash command under
+`.claude/commands/` (mirrors the source plugins' command set): `/caveman
+[level]`, `/caveman-commit`, `/caveman-review`, `/ponytail [level]`,
+`/ponytail-review`, `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain`,
+`/ponytail-help`. Skills without a matching command (`caveman-help`,
+`caveman-stats`, `compress`, `cavecrew-*`) are invoked by description match or
+by name, not a dedicated slash command — same as upstream.
 
 ## Default behavior
 
