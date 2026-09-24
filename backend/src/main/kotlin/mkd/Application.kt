@@ -15,6 +15,7 @@ val AppJson = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefa
 
 fun main() {
     val cfg = Config.fromEnv()
+    Db.init(cfg)
 
     embeddedServer(Netty, port = cfg.port) {
         install(ContentNegotiation) { json(AppJson) }
