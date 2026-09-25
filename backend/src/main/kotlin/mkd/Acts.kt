@@ -48,7 +48,9 @@ object Deadlines {
         ChronoUnit.DAYS.between(now.atZone(zone).toLocalDate(), until)
 }
 
-class ActService(private val cfg: Config, private val max: MaxBotClient, private val gigaChat: GigaChatClient) {
+class ActService(
+    private val cfg: Config, private val max: MaxBotClient, private val gigaChat: GigaChatClient, private val timers: TimerService,
+) {
 
     suspend fun activeAct(houseId: Long): ResultRow? = tx {
         Acts.selectAll()
@@ -120,6 +122,23 @@ class ActService(private val cfg: Config, private val max: MaxBotClient, private
             .singleOrNull()?.get(Chairmen.confirmedAt) != null
         if (!confirmed) throw ApiError(HttpStatusCode.Forbidden, "forbidden", "Доступно только председателю")
         act
+    }
+
+    suspend fun demoShift(actId: Long, userId: Long, days: Int) {
+        if (!cfg.demoMode) throw ApiError(HttpStatusCode.Forbidden, "not_demo", "Команда доступна только в демо-режиме")
+        requireChairmanOf(actId, userId)
+        if (days !in 1..40) throw ApiError(HttpStatusCode.BadRequest, "invalid_days", "Число дней должно быть от 1 до 40")
+        tx {
+            val act = Acts.selectAll().where { Acts.id eq actId }.single()
+            val receivedAt = act[Acts.receivedAt].minus(days.toLong(), ChronoUnit.DAYS)
+            Acts.update({ Acts.id eq actId }) {
+                it[Acts.receivedAt] = receivedAt
+                it[Acts.deadline10] = Deadlines.day10(receivedAt, cfg.zone)
+                it[Acts.deadline30] = Deadlines.day30(receivedAt, cfg.zone)
+            }
+            logEvent(actId, "DEMO_SHIFT", userId, "days=$days")
+        }
+        timers.tick()
     }
 
     suspend fun requireMemberOf(actId: Long, userId: Long): ResultRow = tx {

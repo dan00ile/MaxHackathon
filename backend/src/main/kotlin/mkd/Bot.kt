@@ -73,8 +73,9 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
             is Pending.ChairFio -> handleChairFioText(userId, p.houseId, text)
             is Pending.ChairBasis -> handleChairBasisText(userId, p.houseId, p.fio, text)
             is Pending.ReceiptDate -> handleReceiptDateText(userId, p.actId, text)
-            null -> when (text) {
-                "/start", "/menu" -> entryPoint(userId)
+            null -> when {
+                text == "/start" || text == "/menu" -> entryPoint(userId)
+                text.startsWith("/shift") -> handleShift(userId, text)
                 else -> Unit
             }
         }
@@ -247,6 +248,29 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
                 )
             }
         }
+    }
+
+    private suspend fun handleShift(userId: Long, text: String) {
+        val days = text.removePrefix("/shift").trim().toIntOrNull()
+        val houseId = rolesOf(userId).houseId
+        if (days == null || houseId == null) {
+            max.sendText(userId, "Использование: /shift N (число дней, только в демо-режиме)")
+            return
+        }
+        val actId = acts.activeAct(houseId)?.get(Acts.id)?.value
+        if (actId == null) {
+            max.sendText(userId, "Нет активного акта.")
+            return
+        }
+        try {
+            acts.demoShift(actId, userId, days)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+            return
+        }
+        // ponytail: полноценный statusText/statusButtons появится в S15, здесь — минимальный ответ
+        val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
+        max.sendText(userId, "Статус акта № ${act[Acts.number] ?: "без номера"}: ${act[Acts.status]}")
     }
 
     private suspend fun handleRcvOther(userId: Long, actId: Long) {

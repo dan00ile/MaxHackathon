@@ -38,8 +38,8 @@ fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val max = MaxBotClient(cfg.maxToken, cfg.maxApiBase)
     val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
-    val acts = ActService(cfg, max, gigaChat)
     val timers = TimerService(cfg, max)
+    val acts = ActService(cfg, max, gigaChat, timers)
     scope.launch { timers.loop() }
 
     var bot: Bot? = null

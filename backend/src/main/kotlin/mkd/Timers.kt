@@ -4,6 +4,7 @@ import kotlinx.coroutines.delay
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.update
 import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Instant
@@ -40,6 +41,17 @@ class TimerService(private val cfg: Config, private val max: MaxBotClient, priva
         }
         for (act in acts) {
             val actId = act[Acts.id].value
+            if (now >= Deadlines.silentAt(act[Acts.deadline30], cfg.zone)) {
+                tx {
+                    val sent = Events.selectAll().where { Events.actId eq actId }
+                        .map { it[Events.type] }.filter { it.startsWith("NOTIFY_") }.toSet()
+                    Deadlines.MILESTONES.map { "NOTIFY_D$it" }.filter { it !in sent }
+                        .forEach { type -> logEvent(actId, type, null, "skipped") }
+                    Acts.update({ Acts.id eq actId }) { it[status] = ActStatus.SILENT }
+                    logEvent(actId, "SILENT_CONSENT", null)
+                }
+                continue
+            }
             val sent = tx {
                 Events.selectAll().where { Events.actId eq actId }
                     .map { it[Events.type] }
@@ -57,6 +69,21 @@ class TimerService(private val cfg: Config, private val max: MaxBotClient, priva
             }
             if (notify(act[Acts.houseId].value, actId, text)) {
                 tx { logEvent(actId, type, null, "sent") }
+            }
+        }
+
+        val silentActs = tx { Acts.selectAll().where { Acts.status eq ActStatus.SILENT }.toList() }
+        for (act in silentActs) {
+            val actId = act[Acts.id].value
+            val alreadyNotified = tx {
+                Events.selectAll().where { Events.actId eq actId }.map { it[Events.type] }.contains("NOTIFY_SILENT")
+            }
+            if (alreadyNotified) continue
+            val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+            val text = "Срок 30 дней истёк ${fmt.format(act[Acts.deadline30])}. Акт № ${act[Acts.number] ?: "без номера"} за " +
+                "${act[Acts.period] ?: "—"} считается подписанным (молчаливое согласие, п. 5 Порядка, приказ Минстроя № 318/пр)."
+            if (notify(act[Acts.houseId].value, actId, text, includeResidents = true)) {
+                tx { logEvent(actId, "NOTIFY_SILENT", null, "sent") }
             }
         }
     }
@@ -78,15 +105,17 @@ class TimerService(private val cfg: Config, private val max: MaxBotClient, priva
         }
     }
 
-    private suspend fun notify(houseId: Long, actId: Long, text: String): Boolean {
-        val chairmen = tx {
-            Chairmen.selectAll()
+    private suspend fun notify(houseId: Long, actId: Long, text: String, includeResidents: Boolean = false): Boolean {
+        val recipients = tx {
+            val chairmen = Chairmen.selectAll()
                 .where { (Chairmen.houseId eq houseId) and (Chairmen.confirmedAt.isNotNull()) }
                 .map { it[Chairmen.userId] }
+            if (!includeResidents) chairmen
+            else (chairmen + Users.selectAll().where { Users.houseId eq houseId }.map { it[Users.id] }).distinct()
         }
         val buttons = listOf(listOf(link("Открыть акт", appLink("act_$actId"))), listOf(cb("Статус", "status")))
         var success = false
-        chairmen.forEach { uid ->
+        recipients.forEach { uid ->
             runCatching { max.sendText(uid, text, buttons) }.onSuccess { success = true }
         }
         return success
