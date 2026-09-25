@@ -4,8 +4,6 @@ plugins {
     application
 }
 
-repositories { mavenCentral() }
-
 val ktor = "3.1.3"
 val exposed = "0.61.0"
 
