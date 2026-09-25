@@ -1,1 +1,1 @@
-window.API_BASE = "https://REPLACE-ME";   // публичный HTTPS-адрес бэкенда, см. «Вопросы к человеку»
+window.API_BASE = "https://37-252-21-79.sslip.io";
