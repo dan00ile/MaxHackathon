@@ -36,16 +36,17 @@ fun main() {
     Seed.run()
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val max = MaxBotClient(cfg.maxToken, cfg.maxApiBase)
+    val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
+    val acts = ActService(cfg, max, gigaChat)
+
     var bot: Bot? = null
     if (cfg.maxToken.isNotBlank()) {
-        val max = MaxBotClient(cfg.maxToken, cfg.maxApiBase)
         val me = runBlocking {
             runCatching { max.me() }.getOrElse { error("неверный MAX_BOT_TOKEN: ${it.message}") }
         }
         botUsername = me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
         log.info("MAX bot me(): {}, botUsername={}", me, botUsername)
-        val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
-        val acts = ActService(cfg, max, gigaChat)
         val botInstance = Bot(cfg, max, acts, scope)
         bot = botInstance
 
@@ -97,7 +98,7 @@ fun main() {
                     bot?.let { b -> scope.launch { runCatching { b.handle(update) }.onFailure { log.error("update", it) } } }
                 }
             }
-            api(cfg)
+            api(cfg, max, acts)
         }
     }.start(wait = true)
 }
