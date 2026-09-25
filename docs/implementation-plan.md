@@ -56,7 +56,7 @@
 | HTTP-клиент MAX Bot API: генерить из OpenAPI или руками | **Руками**: один файл `MaxBotClient.kt` на Ktor Client + kotlinx.serialization | Нужно 6 методов (`/updates`, `/messages`, `/answers`, `/uploads`, `/me`, скачивание файла). Генератор даст сотни файлов, которые никто не читает, и отдельный шаг сборки. Поля сверены с официальным Go SDK `max-messenger/max-bot-api-client-go` |
 | React + MAX UI vs чистый HTML/JS | **Чистый HTML/CSS/JS** без сборщика: 4 файла в `webapp/` | 4 экрана, нет сборки → деплой = пуш, нет `package-lock.json`, меньше мест для ошибки у исполнителя. MAX Bridge подключается одним `<script>` |
 | PDF-библиотека | **OpenPDF** `com.github.librepdf:openpdf:1.3.43` (LGPL/MPL) + шрифт DejaVu Sans в ресурсах | Прямой API (`Document`/`Paragraph`/`PdfPTable`/`Image`) — детерминированная вёрстка без HTML/XHTML-шаблонов и их строгого парсинга; умеет встраивать изображения (FR-G2.1) и извлекать текст из PDF (`PdfTextExtractor`) для распознавания акта — одна библиотека на обе задачи. Лицензия свободная. Кириллица — через встроенный TTF |
-| Webhook vs long polling | **Long polling** (`GET /updates`) везде | Не нужен публичный адрес под бота, одинаково работает локально и в Docker. Webhook — после Must |
+| Webhook vs long polling | **Webhook** (`POST /subscriptions`) на сервере, если задан `PUBLIC_URL`; **long polling** (`GET /updates`) — только для локальной отладки без публичного адреса | Организаторы на вебинаре рекомендовали webhook; публичный HTTPS у бэкенда всё равно есть (`deploy/setup.sh`). Polling оставлен, т.к. уже написан и нужен для разработки — см. S4b |
 | Госключ | **Заглушка** (FR-F2 = Should): «Подписать» формирует PDF-экземпляр с пометкой «демо, КЭП не применялась» | requirements §3/§7 |
 | Отправка документа в УК | **Председатель пересылает PDF сам** (email/мессенджер) и жмёт в боте «Отправил исполнителю» → фиксируется время | FR-F1 разрешает «согласованный способ»; SMTP = ещё один секрет и интеграция. Автоотправка — после Must |
 | Распознавание акта (FR-B1.1) | GigaChat `POST /chat/completions` с просьбой вернуть JSON. PDF → текст через OpenPDF и в промпт; фото → загрузка файла в GigaChat и `attachments`. При ошибке — акт без позиций, председатель вводит их вручную в мини-аппе (FR-B1.2) | Один провайдер, один формат ответа; ручной ввод и так нужен по FR-B1.2, поэтому он и есть fallback (NFR-9). Отдельную функцию `table` не используем — её контракт не проверен |
@@ -77,6 +77,7 @@
 | | S2 Схема БД (все таблицы) | T-06 |
 | | S3 Docker, compose, .env.example | T-08 |
 | | S4 Клиент MAX Bot API + long polling | T-07 |
+| | S4b Приём событий через webhook | T-07 |
 | | S5 Проверка initData + `/api/me` | T-09 |
 | | S6 Каркас мини-аппа + GitHub Pages + смоук | T-06, T-07 |
 | `feat/bot-roles` | S7 Демо-справочник (сид) | T-10 |
@@ -282,6 +283,9 @@ data class Config(
 | `DEV_AUTH` | `false` |
 | `FILES_DIR` | `./data/files` |
 | `TZ_ZONE` | `Europe/Moscow` |
+| `PUBLIC_URL` | `""` — публичный HTTPS-адрес бэкенда без `/` на конце; задан → webhook, пуст → polling (S4b) |
+| `WEBHOOK_SECRET` | `""` — случайная строка `[A-Za-z0-9]`, ≥32 символа; обязателен, если задан `PUBLIC_URL` |
+| `DEV_MAX_USER_ID` | `""` — только для `dev/update.sh` (от чьего имени слать тестовые события); бэкенд не читает |
 
 `Application.kt` на этом шаге: `fun main()` → `Config.fromEnv()` →
 `embeddedServer(Netty, port = cfg.port) { install(ContentNegotiation) { json(AppJson) }; install(CallLogging); routing { get("/health") { call.respondText("ok") } } }.start(wait = true)`.
@@ -571,6 +575,11 @@ DEMO_MODE=true
 # Только для локальной отладки без MAX: принимать заголовок X-Dev-User-Id. НИКОГДА не true на проверке
 DEV_AUTH=false
 TZ_ZONE=Europe/Moscow
+# Публичный HTTPS-адрес бэкенда (напр. https://81-200-1-2.sslip.io). Задан → бот получает события через webhook,
+# пуст → long polling (локальная отладка). deploy/setup.sh заполняет сам
+PUBLIC_URL=
+# Случайная строка ≥32 символов [A-Za-z0-9] — часть адреса webhook. deploy/setup.sh генерирует сам
+WEBHOOK_SECRET=
 ```
 
 `.dockerignore`: `**/build`, `**/.gradle`, `.git`, `.idea`, `docs`,
@@ -675,6 +684,110 @@ class Bot(private val max: MaxBotClient /* + сервисы в следующи�
 токена приложение стартует и пишет предупреждение.
 
 **Коммит:** `feat(bot): клиент MAX Bot API и long polling`
+
+---
+
+### S4b. Приём событий через webhook (T-07)
+
+> Добавлено после S4: организаторы рекомендуют webhook, а не polling.
+> `Bot.handle` не меняется — меняется только способ доставки событий.
+
+**Файлы:** `Config.kt`, `MaxBotClient.kt`, `Bot.kt`, `Application.kt`,
+`.env.example`, `dev/update.sh`.
+
+Контракт MAX:
+- `GET /subscriptions` → `{"subscriptions":[{"url":"…", …}]}`.
+- `POST /subscriptions` тело
+  `{"url":"<https-url>","update_types":["message_created","message_callback","bot_started"]}`
+  → `{"success":true}`.
+- `DELETE /subscriptions?url=<url>` → `{"success":true}`.
+- MAX шлёт на `url` POST с телом — **один** объект `Update` (та же форма,
+  что элемент `updates` в `GET /updates`). Ответ не 200 → MAX повторит.
+- Пока на токене есть подписка, `GET /updates` для него не работает.
+
+`Config`: поля `publicUrl: String`, `webhookSecret: String` (см. таблицу
+env в S1). Если `publicUrl` не пуст, а `webhookSecret` короче 32 символов —
+падать при старте с понятной ошибкой.
+
+`MaxBotClient` — добавить:
+```kotlin
+suspend fun subscriptions(): List<String>              // url'ы текущих подписок
+suspend fun subscribe(url: String)                      // POST /subscriptions, update_types как выше
+suspend fun unsubscribe(url: String)                    // DELETE /subscriptions?url=…
+```
+
+Роут (в `Application.kt` рядом с `/health`, **не** под `/api` — там
+проверка initData):
+```
+POST /webhook/max/{secret}
+  secret != cfg.webhookSecret (сравнение через MessageDigest.isEqual) → 404, тело пустое
+  иначе: val u = call.receive<Update>(); call.respond(HttpStatusCode.OK);
+         scope.launch { runCatching { bot.handle(u) }.onFailure { log.error("update", it) } }
+  (сначала ответить 200, потом обрабатывать — MAX не должен ждать GigaChat/PDF)
+```
+
+Запуск бота в `Application.kt` (после `me()` из S4):
+- `cfg.publicUrl` не пуст → **webhook-режим**:
+  `hook = "${cfg.publicUrl}/webhook/max/${cfg.webhookSecret}"`;
+  для каждой подписки из `subscriptions()`, у которой url ≠ `hook`, —
+  `unsubscribe` (старые адреса, напр. после смены IP); если `hook` ещё нет
+  — `subscribe(hook)`. `pollLoop` **не** запускать. В лог — адрес без
+  секрета: `"webhook: ${cfg.publicUrl}/webhook/max/***"`.
+- `cfg.publicUrl` пуст → **локальный режим**. Вызвать `subscriptions()`:
+  - список пуст → `pollLoop` как в S4;
+  - список не пуст (webhook держит сервер) → `pollLoop` **не** запускать,
+    чужую подписку **не** удалять, лог INFO «Webhook держит сервер — события
+    MAX сюда не придут; подавайте их curl'ом на /webhook/max/{secret}».
+- Роут `/webhook/max/{secret}` регистрируется в **обоих** режимах, если
+  `cfg.webhookSecret` не пуст.
+
+#### Разработка с одним токеном бота
+
+Второго бота нет, поэтому события из MAX получает только сервер. Исходящие
+вызовы (`sendText`, `sendFile`, `answerCallback`) работают с тем же токеном
+откуда угодно. Порядок для исполнителя:
+1. Локально: `PUBLIC_URL` пуст, `WEBHOOK_SECRET=local-dev-secret-0000000000000000`,
+   `DEV_AUTH=true`, `DEV_MAX_USER_ID=<user_id человека>` (узнать у человека
+   или из `/api/me` на сервере; это не секрет).
+2. Входящие события — скриптом `dev/update.sh` (создать в этом шаге):
+   ```bash
+   #!/usr/bin/env bash
+   # dev/update.sh text "/start" | dev/update.sh callback "status" | dev/update.sh file <url> <name>
+   # Шлёт в локальный бэкенд событие MAX от лица DEV_MAX_USER_ID.
+   ```
+   Скрипт собирает JSON `Update` (`message_created` с `body.text`;
+   `message_callback` с `callback.payload` и `callback_id=dev-<время>`;
+   `message_created` с `attachments=[{"type":"file","payload":{"url":…},"filename":…}]`)
+   и делает `curl -X POST localhost:8080/webhook/max/$WEBHOOK_SECRET`.
+   Ответ бота приходит человеку в MAX по-настоящему.
+3. `answerCallback` на `dev-*` callback_id вернёт ошибку от MAX — это
+   ожидаемо, ловить и логировать, не падать.
+4. Мини-апп — локально через `?devUser=<id>` (S6), не через MAX.
+5. Живая проверка в MAX (кнопки, мини-апп из чата) — делает **человек** на
+   сервере после мержа (автообновление ~2 мин). В PR каждого шага писать
+   короткий сценарий «что нажать в MAX и что должно произойти».
+
+Во всех «Критериях готовности» ниже фраза «в MAX сделать X» для
+исполнителя означает: подать событие через `dev/update.sh` и убедиться,
+что человеку пришёл ожидаемый ответ; нажатия кнопок и мини-апп внутри
+MAX — в сценарий для человека.
+
+**Критерий готовности:**
+1. Локально без `PUBLIC_URL` — поведение S4 (эхо через polling) не
+   изменилось.
+2. `curl -X POST localhost:8080/webhook/max/wrong -d '{}'` → 404.
+3. `curl -X POST localhost:8080/webhook/max/$WEBHOOK_SECRET -H 'Content-Type: application/json' -d '{"update_type":"message_created","timestamp":1,"message":{"sender":{"user_id":1},"recipient":{"user_id":1},"timestamp":1,"body":{"mid":"m1","text":"hi"}}}'`
+   → 200 сразу (отправка эха упадёт на несуществующем user_id — это
+   нормально, ошибка только в логе).
+4. Локально без `PUBLIC_URL`, когда webhook держит сервер: `pollLoop`
+   не стартует, `dev/update.sh text привет` → человеку в MAX пришло
+   «Эхо: привет».
+5. Сценарий для человека (в PR): после мержа и автообновления написать
+   боту — ответ «Эхо: …»; в логе сервера
+   (`docker compose -f /opt/maxhackathon/compose.yaml logs backend`)
+   строка `webhook: https://…/webhook/max/***`.
+
+**Коммит:** `feat(bot): приём событий MAX через webhook`
 
 ---
 
@@ -1802,9 +1915,9 @@ README — ровно разделы из hackathon-brief §«Формат сд�
 9. Пошаговый сценарий проверки — из `docs/e2e-checklist.md`.
 10. Примеры ожидаемого поведения (ответы бота на ключевых шагах).
 11. Известные ограничения: подпись без КЭП; отправка в УК вручную;
-    одновременный запуск двух экземпляров с одним токеном бота делит
-    апдейты (при локальной проверке остановить стенд или взять другой
-    токен); состояние диалога регистрации теряется при рестарте;
+    пока сервер держит webhook, локальный запуск с тем же токеном не
+    получит событий (для локальной проверки — отдельный тестовый бот или
+    остановить стенд); состояние диалога регистрации теряется при рестарте;
     справочник оснований демонстрационный.
 12. Остановка и перезапуск: `docker compose down` / `docker compose up`;
     полный сброс — `docker compose down -v`.
@@ -1886,7 +1999,6 @@ Should (requirements §3 / tasks.md):
 
 Технический долг Must-пути (собрать `ponytail:`-комментарии через
 `/ponytail-debt`):
-- Webhook (`POST /subscriptions`) вместо long polling для прод-режима.
 - Персистентное состояние диалога бота (сейчас в памяти).
 - Миграции схемы (Flyway) вместо `SchemaUtils.create`.
 - Удаление ПДн по запросу пользователя (NFR-2) командой бота.
