@@ -6,7 +6,7 @@
 # новые коммиты — git reset на них и пересборка контейнеров. .env не трогается.
 set -euo pipefail
 
-REPO=https://github.com/dan00ile/MaxHackathon.git
+REPO=git@github.com:dan00ile/MaxHackathon.git
 DIR=/opt/maxhackathon
 
 update() {
