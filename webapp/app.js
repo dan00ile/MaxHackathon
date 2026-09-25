@@ -65,18 +65,26 @@ function startParam() {
   return DEV_START;
 }
 
+function showMessage(app, text, isError) {
+  app.innerHTML = "";
+  const p = document.createElement("p");
+  p.className = isError ? "error" : "empty-state";
+  p.textContent = text;
+  app.appendChild(p);
+}
+
 async function start() {
   const app = document.getElementById("app");
   try {
     state.me = await api("/api/me");
   } catch (e) {
-    app.textContent = "Ошибка: " + e.message;
+    showMessage(app, "Ошибка: " + e.message, true);
     return;
   }
   if (WA) { WA.ready(); WA.expand && WA.expand(); }
 
   if (!state.me.registered) {
-    app.textContent = "Сначала напишите боту /start";
+    showMessage(app, "Сначала напишите боту /start");
     return;
   }
 
@@ -85,14 +93,14 @@ async function start() {
   if (sp && sp.startsWith("act_")) actId = Number(sp.slice(4));
   else if (sp && sp.startsWith("refusal_")) { actId = Number(sp.slice(8)); state.tab = "refusal"; }
   if (!actId) {
-    app.textContent = "Активного акта нет";
+    showMessage(app, "Активного акта нет");
     return;
   }
 
   try {
     state.act = await api(`/api/acts/${actId}`);
   } catch (e) {
-    app.textContent = "Ошибка: " + e.message;
+    showMessage(app, "Ошибка: " + e.message, true);
     return;
   }
   render();
@@ -103,29 +111,64 @@ function formatDate(iso) {
   return `${d}.${m}.${y}`;
 }
 
-function render() {
+function renderHeader(act) {
   const header = document.getElementById("header");
-  const app = document.getElementById("app");
-  const act = state.act;
+  header.innerHTML = "";
+
+  const eyebrow = document.createElement("p");
+  eyebrow.className = "app-eyebrow";
+  eyebrow.textContent = act.houseAddress;
+  header.appendChild(eyebrow);
+
+  const title = document.createElement("h1");
+  title.className = "app-title";
+  title.textContent = `Акт № ${act.number || "без номера"} за ${act.period || "—"}`;
+  header.appendChild(title);
+
   const statusRu = STATUS_RU[act.status] || act.status;
-  const lines = [
-    `${act.houseAddress} — Акт № ${act.number || "без номера"} за ${act.period || "—"}`,
-    `Статус: ${statusRu}`,
-  ];
+  const pill = document.createElement("span");
+  pill.className = `status-pill status-${act.status}`;
+  pill.textContent = statusRu;
+  header.appendChild(pill);
+
   if (["RECEIVED", "COLLECTING", "REVIEW"].includes(act.status)) {
     if (act.daysLeft10 < 0) {
-      lines.push(`Срок по приказу истёк ${formatDate(act.deadline10)}, но акт ещё не считается принятым — решение можно принять до ${formatDate(act.deadline30)}.`);
+      const note = document.createElement("p");
+      note.className = "deadline-note";
+      note.textContent = `Срок по приказу истёк ${formatDate(act.deadline10)}, но акт ещё не считается принятым — решение можно принять до ${formatDate(act.deadline30)}.`;
+      header.appendChild(note);
     } else {
-      lines.push(`Срок по приказу (10 дней): до ${formatDate(act.deadline10)} — осталось дней: ${act.daysLeft10}`);
+      const deadlines = document.createElement("div");
+      deadlines.className = "deadlines";
+      deadlines.appendChild(deadlineChip("Срок по приказу", `${act.daysLeft10} дн. · до ${formatDate(act.deadline10)}`, act.daysLeft10 <= 3));
+      deadlines.appendChild(deadlineChip("Защитный срок", `${act.daysLeft30} дн. · до ${formatDate(act.deadline30)}`, act.daysLeft30 <= 5));
+      header.appendChild(deadlines);
     }
-    lines.push(`Защитный срок (30 дней): до ${formatDate(act.deadline30)} — осталось дней: ${act.daysLeft30}`);
   }
-  header.textContent = lines.join("\n");
+}
+
+function deadlineChip(label, value, warn) {
+  const chip = document.createElement("div");
+  chip.className = "deadline-chip" + (warn ? " deadline-chip--warn" : "");
+  const lbl = document.createElement("p");
+  lbl.className = "deadline-chip__label";
+  lbl.textContent = label;
+  const val = document.createElement("p");
+  val.className = "deadline-chip__value";
+  val.textContent = value;
+  chip.append(lbl, val);
+  return chip;
+}
+
+function render() {
+  const app = document.getElementById("app");
+  const act = state.act;
+  renderHeader(act);
   app.innerHTML = "";
 
   if (act.status === "RECEIVED") {
     if (act.isChairman) renderCardEditor(app, act);
-    else app.textContent = "Председатель ещё готовит акт к проверке.";
+    else showMessage(app, "Председатель ещё готовит акт к проверке.");
     return;
   }
   if (act.isChairman && (act.status === "COLLECTING" || act.status === "REVIEW")) {
@@ -133,7 +176,7 @@ function render() {
     return;
   }
   if (act.isResident) { renderChecklist(app, act); return; }
-  app.textContent = "Статус: " + statusRu;
+  showMessage(app, "Статус: " + (STATUS_RU[act.status] || act.status));
 }
 
 function renderChairmanTabs(app, act) {
@@ -175,7 +218,10 @@ function renderChairmanTabs(app, act) {
 }
 
 function renderRefusalTab(app, act) {
-  app.textContent = "Загрузка…";
+  const loading = document.createElement("p");
+  loading.className = "loading-state";
+  loading.textContent = "Загрузка…";
+  app.appendChild(loading);
   api(`/api/acts/${act.id}/refusal`)
     .then((dto) => { app.innerHTML = ""; renderRefusalForm(app, act, dto); })
     .catch((e) => {
@@ -191,9 +237,15 @@ function renderRefusalTab(app, act) {
 }
 
 function renderRefusalEmpty(app, act) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const p = document.createElement("p");
+  p.className = "hint";
+  p.textContent = "Черновик мотивированного отказа ещё не собран.";
   const err = document.createElement("div");
   err.className = "error";
   const btn = document.createElement("button");
+  btn.className = "btn btn-primary";
   btn.textContent = "Собрать черновик";
   btn.onclick = async () => {
     err.textContent = "";
@@ -203,7 +255,8 @@ function renderRefusalEmpty(app, act) {
       renderRefusalForm(app, act, dto);
     } catch (e) { err.textContent = "Ошибка: " + e.message; }
   };
-  app.append(btn, err);
+  card.append(p, btn);
+  app.append(card, err);
 }
 
 function renderRefusalForm(app, act, dto) {
@@ -213,8 +266,11 @@ function renderRefusalForm(app, act, dto) {
   err.className = "error";
   app.appendChild(err);
 
+  const placeCard = document.createElement("div");
+  placeCard.className = "card";
   const placeField = field("Место составления", dto.place);
-  app.appendChild(placeField.wrap);
+  placeCard.appendChild(placeField.wrap);
+  app.appendChild(placeCard);
 
   const objectionInputs = dto.objections.map((o) => {
     const wrap = document.createElement("div");
@@ -244,6 +300,8 @@ function renderRefusalForm(app, act, dto) {
 
     const counters = document.createElement("div");
     counters.className = "item-agg";
+    counters.style.marginTop = "var(--space-xl)";
+    counters.style.marginBottom = "0";
     counters.textContent = `Выполнено: ${o.okCount}, претензия: ${o.issueCount}, фото: ${o.photoCount}`;
     wrap.appendChild(counters);
 
@@ -253,6 +311,7 @@ function renderRefusalForm(app, act, dto) {
 
   if (dto.noObjectionLineNos.length > 0) {
     const p = document.createElement("p");
+    p.className = "hint";
     p.textContent = `По позициям № ${dto.noObjectionLineNos.join(", ")} возражений не имеется.`;
     app.appendChild(p);
   }
@@ -265,6 +324,7 @@ function renderRefusalForm(app, act, dto) {
   }
 
   const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-secondary";
   saveBtn.textContent = "Сохранить";
   saveBtn.onclick = async () => {
     err.textContent = "";
@@ -276,6 +336,7 @@ function renderRefusalForm(app, act, dto) {
   };
 
   const rebuildBtn = document.createElement("button");
+  rebuildBtn.className = "btn btn-secondary";
   rebuildBtn.textContent = "Пересобрать из замечаний";
   rebuildBtn.onclick = async () => {
     if (!confirm("Ваши правки будут потеряны.")) return;
@@ -288,6 +349,7 @@ function renderRefusalForm(app, act, dto) {
   };
 
   const confirmBtn = document.createElement("button");
+  confirmBtn.className = "btn btn-primary";
   confirmBtn.textContent = "Подтвердить и сформировать документ";
   confirmBtn.onclick = async () => {
     if (!confirm("После подтверждения текст изменить нельзя.")) return;
@@ -300,26 +362,31 @@ function renderRefusalForm(app, act, dto) {
     } catch (e) { err.textContent = "Ошибка: " + e.message; }
   };
 
-  app.append(saveBtn, rebuildBtn, confirmBtn);
+  app.append(confirmBtn, saveBtn, rebuildBtn);
 }
 
 function renderRefusalConfirmed(app, dto) {
+  const card = document.createElement("div");
+  card.className = "card";
   const p = document.createElement("p");
+  p.className = "hint";
+  p.style.margin = "0 0 12px";
   p.textContent = "Документ отправлен вам в чат MAX.";
-  app.appendChild(p);
   const btn = document.createElement("button");
+  btn.className = "btn btn-primary";
   btn.textContent = "Вернуться в чат";
   btn.onclick = () => { if (WA && WA.close) WA.close(); };
-  app.appendChild(btn);
+  card.append(p, btn);
+  app.appendChild(card);
 }
 
 function renderRemarksSummary(app, act) {
   const err = document.createElement("div");
   err.className = "error";
-  app.appendChild(err);
 
   if (act.status === "COLLECTING") {
     const closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-primary";
     closeBtn.textContent = "Завершить сбор замечаний";
     closeBtn.onclick = async () => {
       if (!confirm("После завершения сбора жители больше не смогут отмечать позиции.")) return;
@@ -329,6 +396,7 @@ function renderRemarksSummary(app, act) {
     };
     app.appendChild(closeBtn);
   }
+  app.appendChild(err);
 
   const items = [...act.items].sort((a, b) => b.stats.issue - a.stats.issue);
   items.forEach((item) => app.appendChild(renderRemarksItem(item, err)));
@@ -353,10 +421,20 @@ function renderRemarksItem(item, err) {
     box.className = "remark-box";
     const text = document.createElement("p");
     if (r.llmStatus === "PENDING") text.textContent = "обрабатывается…";
-    else text.textContent = (r.formalized || r.text || "") + (r.llmStatus === "FAILED" ? " (без обработки)" : "");
+    else {
+      text.textContent = r.formalized || r.text || "";
+      if (r.llmStatus === "FAILED") {
+        const badge = document.createElement("span");
+        badge.className = "llm-badge";
+        badge.textContent = " (без обработки)";
+        text.appendChild(badge);
+      }
+    }
     box.appendChild(text);
     const photosDiv = document.createElement("div");
     photosDiv.className = "photos";
+    photosDiv.style.marginTop = "8px";
+    photosDiv.style.marginBottom = "0";
     (r.photos || []).forEach((p) => {
       const img = document.createElement("img");
       img.className = "thumb";
@@ -368,9 +446,11 @@ function renderRemarksItem(item, err) {
   });
 
   const decisionRow = document.createElement("div");
+  decisionRow.className = "segmented";
   const acceptBtn = document.createElement("button");
   acceptBtn.textContent = "Принять";
   const disputeBtn = document.createElement("button");
+  disputeBtn.className = "negative";
   disputeBtn.textContent = "Оспорить";
   decisionRow.append(acceptBtn, disputeBtn);
   card.appendChild(decisionRow);
@@ -379,6 +459,7 @@ function renderRemarksItem(item, err) {
     disputeBtn.disabled = true;
     const note = document.createElement("p");
     note.className = "hint";
+    note.style.marginTop = "-4px";
     note.textContent = "Нет замечаний с фото — возражать нечем";
     card.appendChild(note);
   }
@@ -407,6 +488,7 @@ function renderChecklist(app, act) {
   const editable = act.status === "COLLECTING";
   if (!editable) {
     const note = document.createElement("p");
+    note.className = "hint";
     note.textContent = "Сбор замечаний закрыт.";
     app.appendChild(note);
   }
@@ -432,9 +514,11 @@ function renderChecklistItem(item, editable) {
   let photos = my.photos || [];
 
   const btnRow = document.createElement("div");
+  btnRow.className = "segmented";
   const okBtn = document.createElement("button");
   okBtn.textContent = "Выполнено";
   const issueBtn = document.createElement("button");
+  issueBtn.className = "negative";
   issueBtn.textContent = "Есть претензия";
   btnRow.append(okBtn, issueBtn);
   card.appendChild(btnRow);
@@ -452,6 +536,7 @@ function renderChecklistItem(item, editable) {
 
   const photosDiv = document.createElement("div");
   photosDiv.className = "photos";
+  photosDiv.style.marginTop = "var(--space-xl)";
   function renderPhotos() {
     photosDiv.innerHTML = "";
     photos.forEach((p) => {
@@ -470,7 +555,8 @@ function renderChecklistItem(item, editable) {
   fileInput.capture = "environment";
   fileInput.style.display = "none";
   const addPhotoBtn = document.createElement("button");
-  addPhotoBtn.textContent = "Добавить фото";
+  addPhotoBtn.className = "btn btn-secondary";
+  addPhotoBtn.textContent = "📷 Добавить фото";
   addPhotoBtn.onclick = () => fileInput.click();
   issueBox.append(addPhotoBtn, fileInput);
 
@@ -480,6 +566,7 @@ function renderChecklistItem(item, editable) {
   issueBox.appendChild(hint);
 
   const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-primary";
   saveBtn.textContent = "Сохранить";
   issueBox.appendChild(saveBtn);
 
@@ -561,13 +648,18 @@ function field(label, value) {
 
 function renderCardEditor(app, act) {
   if (act.recognition === "PENDING") {
+    const card = document.createElement("div");
+    card.className = "card";
     const p = document.createElement("p");
+    p.className = "hint";
+    p.style.margin = "0 0 12px";
     p.textContent = "Акт распознаётся…";
-    app.appendChild(p);
     const refreshBtn = document.createElement("button");
+    refreshBtn.className = "btn btn-primary";
     refreshBtn.textContent = "Обновить";
     refreshBtn.onclick = async () => { state.act = await api(`/api/acts/${act.id}`); render(); };
-    app.appendChild(refreshBtn);
+    card.append(p, refreshBtn);
+    app.appendChild(card);
     return;
   }
 
@@ -575,10 +667,13 @@ function renderCardEditor(app, act) {
   err.className = "error";
   app.appendChild(err);
 
+  const infoCard = document.createElement("div");
+  infoCard.className = "card";
   const numberField = field("Номер", act.number || "");
   const dateField = field("Дата оформления (ГГГГ-ММ-ДД)", act.formedDate || "");
   const periodField = field("Период", act.period || "");
-  app.append(numberField.wrap, dateField.wrap, periodField.wrap);
+  infoCard.append(numberField.wrap, dateField.wrap, periodField.wrap);
+  app.append(infoCard);
 
   const itemsDiv = document.createElement("div");
   app.appendChild(itemsDiv);
@@ -590,13 +685,34 @@ function renderCardEditor(app, act) {
   function renderItems() {
     itemsDiv.innerHTML = "";
     items.forEach((item, idx) => {
-      const row = document.createElement("div");
-      row.className = "item-row";
+      const itemCard = document.createElement("div");
+      itemCard.className = "item-card";
+
+      const itemHeader = document.createElement("div");
+      itemHeader.style.display = "flex";
+      itemHeader.style.justifyContent = "space-between";
+      itemHeader.style.alignItems = "center";
+      const itemLabel = document.createElement("span");
+      itemLabel.className = "item-agg";
+      itemLabel.style.margin = "0";
+      itemLabel.textContent = `Позиция № ${idx + 1}`;
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn-ghost";
+      delBtn.textContent = "Удалить";
+      delBtn.onclick = () => { items.splice(idx, 1); renderItems(); };
+      itemHeader.append(itemLabel, delBtn);
+      itemCard.appendChild(itemHeader);
 
       const nameInput = document.createElement("input");
       nameInput.value = item.name;
       nameInput.placeholder = "Наименование";
+      nameInput.style.width = "100%";
+      nameInput.style.marginTop = "var(--space-l)";
       nameInput.oninput = () => { item.name = nameInput.value; };
+      itemCard.appendChild(nameInput);
+
+      const row = document.createElement("div");
+      row.className = "item-row";
 
       const periodicityInput = document.createElement("input");
       periodicityInput.value = item.periodicity;
@@ -623,18 +739,17 @@ function renderCardEditor(app, act) {
       });
       kindSelect.onchange = () => { item.workKind = kindSelect.value; };
 
-      const delBtn = document.createElement("button");
-      delBtn.textContent = "удалить";
-      delBtn.onclick = () => { items.splice(idx, 1); renderItems(); };
-
-      row.append(nameInput, periodicityInput, volumeInput, costInput, kindSelect, delBtn);
-      itemsDiv.appendChild(row);
+      row.append(periodicityInput, volumeInput, costInput);
+      itemCard.append(row, kindSelect);
+      kindSelect.style.marginTop = "var(--space-l)";
+      itemsDiv.appendChild(itemCard);
     });
   }
   renderItems();
 
   const addBtn = document.createElement("button");
-  addBtn.textContent = "+ позиция";
+  addBtn.className = "btn btn-secondary";
+  addBtn.textContent = "+ Добавить позицию";
   addBtn.onclick = () => {
     items.push({ id: null, name: "", periodicity: "", volume: "", cost: "", workKind: "OTHER" });
     renderItems();
@@ -658,6 +773,7 @@ function renderCardEditor(app, act) {
   }
 
   const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-secondary";
   saveBtn.textContent = "Сохранить";
   saveBtn.onclick = async () => {
     try { await save(); render(); }
@@ -666,6 +782,7 @@ function renderCardEditor(app, act) {
   app.appendChild(saveBtn);
 
   const openBtn = document.createElement("button");
+  openBtn.className = "btn btn-primary";
   openBtn.textContent = "Открыть сбор замечаний";
   openBtn.onclick = async () => {
     if (!confirm("После открытия позиции нельзя будет менять.")) return;
