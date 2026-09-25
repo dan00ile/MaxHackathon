@@ -16,7 +16,7 @@ update() {
   # .deployed пишется только после успешной сборки — упавшая сборка повторится на следующем тике
   [ "$target" = "$(cat .deployed 2>/dev/null)" ] && return 0
   git reset -q --hard "$target"
-  docker compose up -d --build
+  GIT_SHA="$target" docker compose up -d --build   # GIT_SHA → /health (S4c)
   echo "$target" > .deployed
   echo "$(date -Is) обновлено до ${target:0:7}"
 }
@@ -49,7 +49,7 @@ HOST="${IP//./-}.sslip.io"
 set_env PUBLIC_URL "https://$HOST"
 grep -q '^WEBHOOK_SECRET=.\{32,\}' .env || set_env WEBHOOK_SECRET "$(openssl rand -hex 24)"
 
-docker compose up -d --build
+GIT_SHA="$(git rev-parse HEAD)" docker compose up -d --build
 git rev-parse HEAD > .deployed
 
 # Caddy в контейнере, сертификат Let's Encrypt
