@@ -60,12 +60,29 @@ async function start() {
   render();
 }
 
+function formatDate(iso) {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}.${m}.${y}`;
+}
+
 function render() {
   const header = document.getElementById("header");
   const app = document.getElementById("app");
   const act = state.act;
   const statusRu = STATUS_RU[act.status] || act.status;
-  header.textContent = `${act.houseAddress} — Акт № ${act.number || "без номера"} за ${act.period || "—"} — ${statusRu}`;
+  const lines = [
+    `${act.houseAddress} — Акт № ${act.number || "без номера"} за ${act.period || "—"}`,
+    `Статус: ${statusRu}`,
+  ];
+  if (["RECEIVED", "COLLECTING", "REVIEW"].includes(act.status)) {
+    if (act.daysLeft10 < 0) {
+      lines.push(`Срок по приказу истёк ${formatDate(act.deadline10)}, но акт ещё не считается принятым — решение можно принять до ${formatDate(act.deadline30)}.`);
+    } else {
+      lines.push(`Срок по приказу (10 дней): до ${formatDate(act.deadline10)} — осталось дней: ${act.daysLeft10}`);
+    }
+    lines.push(`Защитный срок (30 дней): до ${formatDate(act.deadline30)} — осталось дней: ${act.daysLeft30}`);
+  }
+  header.textContent = lines.join("\n");
   app.innerHTML = "";
 
   if (act.status === "RECEIVED") {
