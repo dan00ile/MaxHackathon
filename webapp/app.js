@@ -3,14 +3,45 @@ const params = new URLSearchParams(location.search);
 const DEV_USER = params.get("devUser");          // локальная отладка вне MAX (нужен DEV_AUTH=true на бэкенде)
 const DEV_START = params.get("startapp");         // локальная отладка стартового параметра, напр. ?startapp=act_1
 
-async function api(path, opts = {}) {
-  const headers = { ...(opts.headers || {}) };
+function authHeaders() {
+  const headers = {};
   if (WA && WA.initData) headers["X-Max-Init-Data"] = WA.initData;
   else if (DEV_USER) headers["X-Dev-User-Id"] = DEV_USER;
+  return headers;
+}
+
+async function api(path, opts = {}) {
+  const headers = { ...authHeaders(), ...(opts.headers || {}) };
   if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
   const r = await fetch(window.API_BASE + path, { ...opts, headers });
   if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
   return r.status === 204 ? null : r.json();
+}
+
+// сервер требует X-Max-Init-Data/X-Dev-User-Id даже на статичные картинки — обычный <img src> их не передаст
+async function loadImage(url, imgEl) {
+  try {
+    const r = await fetch(window.API_BASE + url, { headers: authHeaders() });
+    if (!r.ok) return;
+    imgEl.src = URL.createObjectURL(await r.blob());
+  } catch (e) { /* миниатюра просто не загрузится */ }
+}
+
+// уменьшаем фото на клиенте перед загрузкой: длинная сторона ≤1600px, JPEG q=0.8
+async function resizeImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const maxSide = 1600;
+  let { width, height } = bitmap;
+  if (width > maxSide || height > maxSide) {
+    const scale = maxSide / Math.max(width, height);
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
 }
 
 const STATUS_RU = {
@@ -22,7 +53,7 @@ const STATUS_RU = {
   SILENT: "Принят молчаливым согласием",
 };
 
-let state = { me: null, act: null };
+let state = { me: null, act: null, tab: "checklist" };
 
 function startParam() {
   if (WA && WA.initDataUnsafe && WA.initDataUnsafe.start_param) return WA.initDataUnsafe.start_param;
@@ -90,7 +121,274 @@ function render() {
     else app.textContent = "Председатель ещё готовит акт к проверке.";
     return;
   }
+  if (act.isChairman && (act.status === "COLLECTING" || act.status === "REVIEW")) {
+    renderChairmanTabs(app, act);
+    return;
+  }
+  if (act.isResident) { renderChecklist(app, act); return; }
   app.textContent = "Статус: " + statusRu;
+}
+
+function renderChairmanTabs(app, act) {
+  if (state.tab !== "checklist" && state.tab !== "remarks") state.tab = "checklist";
+
+  const tabs = document.createElement("div");
+  tabs.className = "tabs";
+  const checklistTab = document.createElement("button");
+  checklistTab.textContent = "Мой чек-лист";
+  const remarksTab = document.createElement("button");
+  remarksTab.textContent = "Замечания";
+  tabs.append(checklistTab, remarksTab);
+  app.appendChild(tabs);
+
+  const body = document.createElement("div");
+  app.appendChild(body);
+
+  function renderBody() {
+    checklistTab.classList.toggle("active", state.tab === "checklist");
+    remarksTab.classList.toggle("active", state.tab === "remarks");
+    body.innerHTML = "";
+    if (state.tab === "checklist") renderChecklist(body, act);
+    else renderRemarksSummary(body, act);
+  }
+  checklistTab.onclick = () => { state.tab = "checklist"; renderBody(); };
+  remarksTab.onclick = () => { state.tab = "remarks"; renderBody(); };
+  renderBody();
+}
+
+function renderRemarksSummary(app, act) {
+  const err = document.createElement("div");
+  err.className = "error";
+  app.appendChild(err);
+
+  if (act.status === "COLLECTING") {
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Завершить сбор замечаний";
+    closeBtn.onclick = async () => {
+      if (!confirm("После завершения сбора жители больше не смогут отмечать позиции.")) return;
+      err.textContent = "";
+      try { state.act = await api(`/api/acts/${act.id}/close-collection`, { method: "POST" }); render(); }
+      catch (e) { err.textContent = "Ошибка: " + e.message; }
+    };
+    app.appendChild(closeBtn);
+  }
+
+  const items = [...act.items].sort((a, b) => b.stats.issue - a.stats.issue);
+  items.forEach((item) => app.appendChild(renderRemarksItem(item, err)));
+}
+
+function renderRemarksItem(item, err) {
+  const card = document.createElement("div");
+  card.className = "item-card";
+
+  const title = document.createElement("div");
+  title.className = "item-title";
+  title.textContent = `№${item.lineNo} ${item.name}`;
+  card.appendChild(title);
+
+  const agg = document.createElement("div");
+  agg.className = "item-agg";
+  agg.textContent = `Выполнено: ${item.stats.ok}, претензия: ${item.stats.issue} (с фото: ${item.stats.issueWithPhoto})`;
+  card.appendChild(agg);
+
+  (item.remarks || []).filter((r) => r.verdict === "ISSUE").forEach((r) => {
+    const box = document.createElement("div");
+    box.className = "remark-box";
+    const text = document.createElement("p");
+    if (r.llmStatus === "PENDING") text.textContent = "обрабатывается…";
+    else text.textContent = (r.formalized || r.text || "") + (r.llmStatus === "FAILED" ? " (без обработки)" : "");
+    box.appendChild(text);
+    const photosDiv = document.createElement("div");
+    photosDiv.className = "photos";
+    (r.photos || []).forEach((p) => {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      loadImage(p.url, img);
+      photosDiv.appendChild(img);
+    });
+    box.appendChild(photosDiv);
+    card.appendChild(box);
+  });
+
+  const decisionRow = document.createElement("div");
+  const acceptBtn = document.createElement("button");
+  acceptBtn.textContent = "Принять";
+  const disputeBtn = document.createElement("button");
+  disputeBtn.textContent = "Оспорить";
+  decisionRow.append(acceptBtn, disputeBtn);
+  card.appendChild(decisionRow);
+
+  if (item.stats.issueWithPhoto === 0) {
+    disputeBtn.disabled = true;
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = "Нет замечаний с фото — возражать нечем";
+    card.appendChild(note);
+  }
+
+  function refresh() {
+    acceptBtn.classList.toggle("active", item.decision === "ACCEPT");
+    disputeBtn.classList.toggle("active", item.decision === "DISPUTE");
+  }
+  refresh();
+
+  async function setDecision(decision) {
+    err.textContent = "";
+    try {
+      const dto = await api(`/api/items/${item.id}/decision`, { method: "PUT", json: { decision } });
+      item.decision = dto.decision;
+      refresh();
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  }
+  acceptBtn.onclick = () => setDecision("ACCEPT");
+  disputeBtn.onclick = () => setDecision("DISPUTE");
+
+  return card;
+}
+
+function renderChecklist(app, act) {
+  const editable = act.status === "COLLECTING";
+  if (!editable) {
+    const note = document.createElement("p");
+    note.textContent = "Сбор замечаний закрыт.";
+    app.appendChild(note);
+  }
+  act.items.forEach((item) => app.appendChild(renderChecklistItem(item, editable)));
+}
+
+function renderChecklistItem(item, editable) {
+  const card = document.createElement("div");
+  card.className = "item-card";
+
+  const title = document.createElement("div");
+  title.className = "item-title";
+  title.textContent = `№${item.lineNo} ${item.name}` + (item.periodicity ? ` — ${item.periodicity}` : "");
+  card.appendChild(title);
+
+  const agg = document.createElement("div");
+  agg.className = "item-agg";
+  const total = item.stats.ok + item.stats.issue;
+  agg.textContent = total > 0 ? `${item.stats.issue} из ${total} ответивших: есть претензия` : "Пока никто не отметил";
+  card.appendChild(agg);
+
+  const my = item.my || { verdict: null, text: null, photos: [] };
+  let photos = my.photos || [];
+
+  const btnRow = document.createElement("div");
+  const okBtn = document.createElement("button");
+  okBtn.textContent = "Выполнено";
+  const issueBtn = document.createElement("button");
+  issueBtn.textContent = "Есть претензия";
+  btnRow.append(okBtn, issueBtn);
+  card.appendChild(btnRow);
+
+  const err = document.createElement("div");
+  err.className = "error";
+  card.appendChild(err);
+
+  const issueBox = document.createElement("div");
+
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Что именно не так? Например: в подъезде 2 не мыли пол с 10 сентября";
+  textarea.value = my.text || "";
+  issueBox.appendChild(textarea);
+
+  const photosDiv = document.createElement("div");
+  photosDiv.className = "photos";
+  function renderPhotos() {
+    photosDiv.innerHTML = "";
+    photos.forEach((p) => {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      loadImage(p.url, img);
+      photosDiv.appendChild(img);
+    });
+  }
+  renderPhotos();
+  issueBox.appendChild(photosDiv);
+
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  fileInput.capture = "environment";
+  fileInput.style.display = "none";
+  const addPhotoBtn = document.createElement("button");
+  addPhotoBtn.textContent = "Добавить фото";
+  addPhotoBtn.onclick = () => fileInput.click();
+  issueBox.append(addPhotoBtn, fileInput);
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "Претензия с фото — самый сильный аргумент для отказа. Без фото председатель не сможет её заявить.";
+  issueBox.appendChild(hint);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Сохранить";
+  issueBox.appendChild(saveBtn);
+
+  card.appendChild(issueBox);
+
+  function setVerdict(v) {
+    okBtn.classList.toggle("active", v === "OK");
+    issueBtn.classList.toggle("active", v === "ISSUE");
+    issueBox.style.display = v === "ISSUE" ? "block" : "none";
+  }
+  setVerdict(my.verdict);
+
+  if (!editable) {
+    okBtn.disabled = true;
+    issueBtn.disabled = true;
+    textarea.disabled = true;
+    addPhotoBtn.style.display = "none";
+    saveBtn.style.display = "none";
+    return card;
+  }
+
+  function applyRemark(dto) {
+    my.verdict = dto.verdict;
+    my.text = dto.text;
+    photos = dto.photos;
+    textarea.value = dto.text || "";
+    setVerdict(dto.verdict);
+    renderPhotos();
+  }
+
+  okBtn.onclick = async () => {
+    err.textContent = "";
+    try { applyRemark(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "OK" } })); }
+    catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  issueBtn.onclick = () => setVerdict("ISSUE");
+
+  async function saveText() {
+    applyRemark(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "ISSUE", text: textarea.value } }));
+  }
+
+  saveBtn.onclick = async () => {
+    err.textContent = "";
+    try { await saveText(); }
+    catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    err.textContent = "";
+    try {
+      await saveText(); // фото можно добавить только к уже сохранённому замечанию
+      const blob = await resizeImage(file);
+      const form = new FormData();
+      form.append("photo", blob, "photo.jpg");
+      const r = await fetch(window.API_BASE + `/api/items/${item.id}/my-remark/photos`, { method: "POST", headers: authHeaders(), body: form });
+      if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
+      photos = [...photos, await r.json()];
+      renderPhotos();
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  return card;
 }
 
 function field(label, value) {
