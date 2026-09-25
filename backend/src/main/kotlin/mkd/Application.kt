@@ -44,7 +44,8 @@ fun main() {
         }
         botUsername = me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
         log.info("MAX bot me(): {}, botUsername={}", me, botUsername)
-        val acts = ActService(cfg, max)
+        val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
+        val acts = ActService(cfg, max, gigaChat)
         val botInstance = Bot(cfg, max, acts, scope)
         bot = botInstance
 
