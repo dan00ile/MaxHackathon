@@ -13,10 +13,17 @@ data class Config(
     val devAuth: Boolean,
     val filesDir: String,
     val zone: ZoneId,
+    val publicUrl: String,
+    val webhookSecret: String,
 ) {
     companion object {
         fun fromEnv(): Config {
             fun env(name: String, default: String) = System.getenv(name)?.takeIf { it.isNotBlank() } ?: default
+            val publicUrl = env("PUBLIC_URL", "").trimEnd('/')
+            val webhookSecret = env("WEBHOOK_SECRET", "")
+            if (publicUrl.isNotBlank() && webhookSecret.length < 32) {
+                error("PUBLIC_URL задан, но WEBHOOK_SECRET короче 32 символов")
+            }
             return Config(
                 port = env("PORT", "8080").toInt(),
                 dbUrl = env("DB_URL", "jdbc:postgresql://localhost:5432/mkd"),
@@ -34,6 +41,8 @@ data class Config(
                 devAuth = env("DEV_AUTH", "false").toBoolean(),
                 filesDir = env("FILES_DIR", "./data/files"),
                 zone = ZoneId.of(env("TZ_ZONE", "Europe/Moscow")),
+                publicUrl = publicUrl,
+                webhookSecret = webhookSecret,
             )
         }
     }
