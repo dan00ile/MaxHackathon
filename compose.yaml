@@ -11,7 +11,10 @@ services:
       interval: 3s
       retries: 20
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        GIT_SHA: "${GIT_SHA:-dev}"
     env_file: .env
     environment:
       DB_URL: jdbc:postgresql://db:5432/mkd
