@@ -34,7 +34,10 @@ private const val CONSENT_TEXT = "Бот помогает совету дома 
 
 private val receiptDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
-class Bot(private val cfg: Config, private val max: MaxBotClient, private val acts: ActService, private val scope: CoroutineScope) {
+class Bot(
+    private val cfg: Config, private val max: MaxBotClient, private val acts: ActService,
+    private val refusal: RefusalService, private val scope: CoroutineScope,
+) {
     private val log = LoggerFactory.getLogger(Bot::class.java)
     private val pending = ConcurrentHashMap<Long, Pending>()
 
@@ -160,6 +163,7 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
                 "close" -> handleClose(userId, arg!!.toLong())
                 "sign" -> handleSignPrompt(userId, arg!!.toLong())
                 "sign_ok" -> handleSignOk(userId, arg!!.toLong())
+                "refuse" -> handleRefuse(userId, arg!!.toLong())
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -330,6 +334,19 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
         } catch (e: ApiError) {
             max.sendText(userId, e.message)
         }
+    }
+
+    private suspend fun handleRefuse(userId: Long, actId: Long) {
+        val dto = try {
+            refusal.draft(actId, userId, rebuild = false)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+            return
+        }
+        max.sendText(
+            userId, "Черновик отказа готов: возражений — ${dto.objections.size}. Проверьте формулировки и подтвердите.",
+            listOf(listOf(link("Открыть черновик", appLink("refusal_$actId")))),
+        )
     }
 
     private suspend fun handleApprove(adminUserId: Long, chairmanRowId: Long) {

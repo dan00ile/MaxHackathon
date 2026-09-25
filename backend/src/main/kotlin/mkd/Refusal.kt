@@ -7,11 +7,16 @@ import kotlinx.serialization.encodeToString
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Instant
+import java.time.ZonedDateTime
 
 @Serializable data class Objection(
     val itemId: Long, val lineNo: Int, val itemName: String,
@@ -23,6 +28,8 @@ import java.time.Instant
     val id: Long, val revision: Int, val place: String, val objections: List<Objection>,
     val noObjectionLineNos: List<Int>, val confirmedAt: String?, val sentAt: String?,
 )
+@Serializable data class ObjectionEdit(val itemId: Long, val fact: String, val demand: String)
+@Serializable data class RefusalEdit(val place: String, val objections: List<ObjectionEdit>)
 
 data class DraftRemark(val verdict: Verdict, val text: String, val photoCount: Int)
 data class DraftItem(
@@ -110,6 +117,114 @@ class RefusalService(
             Refusals.selectAll().where { Refusals.actId eq actId }.single()
         }
         return refusalDtoOf(row)
+    }
+
+    suspend fun get(actId: Long, userId: Long): RefusalDto {
+        acts.requireChairmanOf(actId, userId)
+        val row = tx { Refusals.selectAll().where { Refusals.actId eq actId }.singleOrNull() }
+            ?: throw ApiError(HttpStatusCode.NotFound, "no_refusal", "Черновик отказа не найден")
+        return refusalDtoOf(row)
+    }
+
+    suspend fun edit(actId: Long, userId: Long, editInput: RefusalEdit): RefusalDto {
+        acts.requireChairmanOf(actId, userId)
+        val existing = tx { Refusals.selectAll().where { Refusals.actId eq actId }.singleOrNull() }
+            ?: throw ApiError(HttpStatusCode.NotFound, "no_refusal", "Черновик отказа не найден")
+        if (existing[Refusals.confirmedAt] != null) {
+            throw ApiError(HttpStatusCode.Conflict, "refusal_confirmed", "Отказ уже подтверждён, редактирование недоступно")
+        }
+        if (editInput.objections.any { it.fact.isBlank() || it.demand.isBlank() }) {
+            throw ApiError(HttpStatusCode.BadRequest, "invalid_input", "Поля «Фактически» и «Требование» не могут быть пустыми")
+        }
+        val current = AppJson.decodeFromString<RefusalDraft>(existing[Refusals.draftJson])
+        val knownItemIds = current.objections.map { it.itemId }.toSet()
+        if (editInput.objections.any { it.itemId !in knownItemIds }) {
+            throw ApiError(HttpStatusCode.BadRequest, "unknown_item", "Позиция не найдена в черновике")
+        }
+        val updatedObjections = current.objections.map { o ->
+            val patch = editInput.objections.firstOrNull { it.itemId == o.itemId }
+            if (patch != null) o.copy(fact = patch.fact.trim(), demand = patch.demand.trim()) else o
+        }
+        val newRevision = existing[Refusals.revision] + 1
+        val row = tx {
+            Refusals.update({ Refusals.actId eq actId }) {
+                it[draftJson] = AppJson.encodeToString(current.copy(objections = updatedObjections))
+                it[place] = editInput.place.trim().ifBlank { existing[Refusals.place] }
+                it[revision] = newRevision
+            }
+            logEvent(actId, "REFUSAL_EDITED", userId, "revision=$newRevision")
+            Refusals.selectAll().where { Refusals.actId eq actId }.single()
+        }
+        return refusalDtoOf(row)
+    }
+
+    suspend fun confirm(actId: Long, userId: Long): RefusalDto {
+        val act = acts.requireChairmanOf(actId, userId)
+        val existing = tx { Refusals.selectAll().where { Refusals.actId eq actId }.singleOrNull() }
+            ?: throw ApiError(HttpStatusCode.NotFound, "no_refusal", "Черновик отказа не найден")
+        if (existing[Refusals.confirmedAt] != null) {
+            throw ApiError(HttpStatusCode.Conflict, "refusal_confirmed", "Отказ уже подтверждён")
+        }
+        val draftData = AppJson.decodeFromString<RefusalDraft>(existing[Refusals.draftJson])
+        val objectionByItemId = draftData.objections.associateBy { it.itemId }
+
+        data class PhotoRow(
+            val attId: Long, val lineNo: Int, val itemName: String, val filePath: String,
+            val authorName: String, val uploadedAt: Instant,
+        )
+        val photoRows = tx {
+            objectionByItemId.keys.flatMap { itemId ->
+                val objection = objectionByItemId.getValue(itemId)
+                Remarks.selectAll().where { (Remarks.itemId eq itemId) and (Remarks.verdict eq Verdict.ISSUE) }.flatMap { remark ->
+                    Attachments.selectAll().where { Attachments.remarkId eq remark[Remarks.id].value }.map { att ->
+                        val authorName = Users.select(Users.name).where { Users.id eq att[Attachments.authorId] }
+                            .singleOrNull()?.get(Users.name) ?: "Житель"
+                        PhotoRow(att[Attachments.id].value, objection.lineNo, objection.itemName, att[Attachments.filePath], authorName, att[Attachments.uploadedAt])
+                    }
+                }
+            }.sortedWith(compareBy({ it.lineNo }, { it.uploadedAt }))
+        }
+        val numbered = photoRows.mapIndexed { idx, row -> (idx + 1) to row }
+        tx { numbered.forEach { (no, row) -> Attachments.update({ Attachments.id eq row.attId }) { it[registryNo] = no } } }
+
+        val houseId = act[Acts.houseId].value
+        val house = tx { Houses.selectAll().where { Houses.id eq houseId }.single() }
+        val uk = tx { ManagementCompanies.selectAll().where { ManagementCompanies.id eq house[Houses.ukId].value }.single() }
+        val chairman = tx { Chairmen.selectAll().where { (Chairmen.userId eq userId) and (Chairmen.houseId eq houseId) }.single() }
+        val composedAt = ZonedDateTime.now(cfg.zone)
+        val photos = numbered.map { (no, row) -> PhotoPage(no, row.lineNo, row.itemName, row.authorName, row.uploadedAt.atZone(cfg.zone), File(row.filePath)) }
+
+        val bytes = Pdf.refusal(
+            RefusalPdfData(
+                houseAddress = house[Houses.address], ukName = uk[ManagementCompanies.name],
+                ukRepresentative = uk[ManagementCompanies.representative], exchangeMethod = uk[ManagementCompanies.exchangeMethod],
+                actNumber = act[Acts.number], formedDate = act[Acts.formedDate], period = act[Acts.period],
+                objections = draftData.objections, noObjectionLineNos = draftData.noObjectionLineNos, photos = photos,
+                chairmanFio = chairman[Chairmen.fullName], place = existing[Refusals.place], composedAt = composedAt, demo = cfg.demoMode,
+            ),
+        )
+        val dir = Path.of(cfg.filesDir, "pdf")
+        Files.createDirectories(dir)
+        val pdfPath = dir.resolve("act-$actId-refusal-r${existing[Refusals.revision]}.pdf")
+        Files.write(pdfPath, bytes)
+
+        tx {
+            Refusals.update({ Refusals.actId eq actId }) {
+                it[confirmedAt] = Instant.now()
+                it[confirmedBy] = userId
+                it[Refusals.pdfPath] = pdfPath.toString()
+            }
+            logEvent(actId, "REFUSAL_CONFIRMED", userId)
+        }
+
+        val number = act[Acts.number] ?: "без номера"
+        max.sendFile(
+            userId, bytes, "otkaz-akt-$number.pdf",
+            "Мотивированный отказ готов. Перешлите файл в УК (${uk[ManagementCompanies.exchangeMethod]}) и нажмите кнопку ниже — мы зафиксируем время отправки.",
+            listOf(listOf(cb("Отправил исполнителю", "sent:$actId"))),
+        )
+
+        return tx { refusalDtoOf(Refusals.selectAll().where { Refusals.actId eq actId }.single()) }
     }
 
     private suspend fun draftItemsOf(actId: Long): List<DraftItem> = tx {
