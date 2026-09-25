@@ -17,6 +17,7 @@ import java.nio.file.Path
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
@@ -48,7 +49,9 @@ object Deadlines {
         ChronoUnit.DAYS.between(now.atZone(zone).toLocalDate(), until)
 }
 
-class ActService(private val cfg: Config, private val max: MaxBotClient, private val gigaChat: GigaChatClient) {
+class ActService(
+    private val cfg: Config, private val max: MaxBotClient, private val gigaChat: GigaChatClient, private val timers: TimerService,
+) {
 
     suspend fun activeAct(houseId: Long): ResultRow? = tx {
         Acts.selectAll()
@@ -56,6 +59,24 @@ class ActService(private val cfg: Config, private val max: MaxBotClient, private
             .orderBy(Acts.createdAt to SortOrder.DESC)
             .limit(1)
             .singleOrNull()
+    }
+
+    // последний акт дома независимо от статуса — запасной вариант для /status, когда активного акта уже нет
+    suspend fun lastAct(houseId: Long): ResultRow? = tx {
+        Acts.selectAll().where { Acts.houseId eq houseId }.orderBy(Acts.createdAt to SortOrder.DESC).limit(1).singleOrNull()
+    }
+
+    suspend fun terminalEventAt(actId: Long, status: ActStatus): Instant? {
+        val type = when (status) {
+            ActStatus.SIGNED -> "SIGNED"
+            ActStatus.REJECTED -> "REFUSAL_SENT"
+            ActStatus.SILENT -> "SILENT_CONSENT"
+            else -> return null
+        }
+        return tx {
+            Events.selectAll().where { (Events.actId eq actId) and (Events.type eq type) }
+                .orderBy(Events.at to SortOrder.DESC).limit(1).singleOrNull()?.get(Events.at)
+        }
     }
 
     suspend fun createFromUpload(
@@ -120,6 +141,23 @@ class ActService(private val cfg: Config, private val max: MaxBotClient, private
             .singleOrNull()?.get(Chairmen.confirmedAt) != null
         if (!confirmed) throw ApiError(HttpStatusCode.Forbidden, "forbidden", "Доступно только председателю")
         act
+    }
+
+    suspend fun demoShift(actId: Long, userId: Long, days: Int) {
+        if (!cfg.demoMode) throw ApiError(HttpStatusCode.Forbidden, "not_demo", "Команда доступна только в демо-режиме")
+        requireChairmanOf(actId, userId)
+        if (days !in 1..40) throw ApiError(HttpStatusCode.BadRequest, "invalid_days", "Число дней должно быть от 1 до 40")
+        tx {
+            val act = Acts.selectAll().where { Acts.id eq actId }.single()
+            val receivedAt = act[Acts.receivedAt].minus(days.toLong(), ChronoUnit.DAYS)
+            Acts.update({ Acts.id eq actId }) {
+                it[Acts.receivedAt] = receivedAt
+                it[Acts.deadline10] = Deadlines.day10(receivedAt, cfg.zone)
+                it[Acts.deadline30] = Deadlines.day30(receivedAt, cfg.zone)
+            }
+            logEvent(actId, "DEMO_SHIFT", userId, "days=$days")
+        }
+        timers.tick()
     }
 
     suspend fun requireMemberOf(actId: Long, userId: Long): ResultRow = tx {
@@ -197,6 +235,51 @@ class ActService(private val cfg: Config, private val max: MaxBotClient, private
         }
         chairmen.forEach { uid -> max.sendText(uid, text, listOf(listOf(link("Открыть акт", appLink("act_$actId"))))) }
     }
+}
+
+private val ACTIVE_STATUSES = setOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)
+
+private val statusRu = mapOf(
+    ActStatus.RECEIVED to "Получен",
+    ActStatus.COLLECTING to "Идёт сбор замечаний",
+    ActStatus.REVIEW to "Решение председателя",
+    ActStatus.SIGNED to "Подписан",
+    ActStatus.REJECTED to "Отказ направлен",
+    ActStatus.SILENT to "Принят молчаливым согласием",
+)
+
+fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, eventAt: Instant? = null): String {
+    val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+    val status = act[Acts.status]
+    val header = "Акт № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"}, $address\n" +
+        "Статус: ${statusRu[status]}"
+    if (status !in ACTIVE_STATUSES) {
+        return if (eventAt != null) "$header\nДата: ${fmt.format(eventAt.atZone(zone).toLocalDate())}" else header
+    }
+    val d10 = act[Acts.deadline10]
+    val d30 = act[Acts.deadline30]
+    val n10 = Deadlines.daysLeft(d10, now, zone)
+    val n30 = Deadlines.daysLeft(d30, now, zone)
+    val line10 = if (n10 < 0) {
+        "Срок по приказу истёк ${fmt.format(d10)}, но акт ещё не считается принятым — решение можно принять до ${fmt.format(d30)}."
+    } else {
+        "Срок по приказу (10 дней): до ${fmt.format(d10)} — осталось дней: $n10"
+    }
+    val line30 = "Защитный срок (30 дней): до ${fmt.format(d30)} — осталось дней: $n30"
+    return "$header\n$line10\n$line30"
+}
+
+fun statusButtons(cfg: Config, act: ResultRow, isChairman: Boolean, isResident: Boolean): List<List<Button>> {
+    val status = act[Acts.status]
+    val actId = act[Acts.id].value
+    val buttons = mutableListOf<List<Button>>()
+    if (status in ACTIVE_STATUSES) buttons.add(listOf(link("Открыть акт", appLink("act_$actId"))))
+    if (isChairman && status == ActStatus.COLLECTING) buttons.add(listOf(cb("Завершить сбор замечаний", "close:$actId")))
+    if (isChairman && (status == ActStatus.COLLECTING || status == ActStatus.REVIEW)) {
+        buttons.add(listOf(cb("Подписать", "sign:$actId")))
+        buttons.add(listOf(cb("Сформировать отказ", "refuse:$actId")))
+    }
+    return buttons
 }
 
 private fun mimeOfFileName(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
