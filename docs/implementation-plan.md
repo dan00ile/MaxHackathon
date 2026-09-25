@@ -78,6 +78,7 @@
 | | S3 Docker, compose, .env.example | T-08 |
 | | S4 Клиент MAX Bot API + long polling | T-07 |
 | | S4b Приём событий через webhook | T-07 |
+| | S4c CI в GitHub Actions + версия в `/health` | T-06, T-08 |
 | | S5 Проверка initData + `/api/me` | T-09 |
 | | S6 Каркас мини-аппа + GitHub Pages + смоук | T-06, T-07 |
 | `feat/bot-roles` | S7 Демо-справочник (сид) | T-10 |
@@ -788,6 +789,64 @@ MAX — в сценарий для человека.
    строка `webhook: https://…/webhook/max/***`.
 
 **Коммит:** `feat(bot): приём событий MAX через webhook`
+
+---
+
+### S4c. CI в GitHub Actions + версия в `/health` (T-06, T-08)
+
+> Зачем: сервер сам деплоит всё из `master` (`deploy/setup.sh`), поэтому
+> в `master` должно попадать только то, что собирается и проходит тесты. А
+> по `/health` любой агент по HTTPS проверяет, какая версия реально на
+> сервере.
+
+**Файлы:** `.github/workflows/ci.yml`, `backend/Dockerfile`, `compose.yaml`,
+`Application.kt`.
+
+`.github/workflows/ci.yml`:
+```yaml
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [master]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew test --no-daemon
+        working-directory: backend
+      - run: docker build -t mkd-backend backend
+```
+
+Версия сборки:
+- `backend/Dockerfile`, в runtime-стадии перед `CMD`:
+  `ARG GIT_SHA=dev` и `ENV GIT_SHA=$GIT_SHA`.
+- `compose.yaml`, сервис `backend`:
+  `build: { context: ./backend, args: { GIT_SHA: "${GIT_SHA:-dev}" } }`
+  (вместо `build: ./backend`).
+- `/health` отвечает `ok ${System.getenv("GIT_SHA") ?: "dev"}` (одна
+  строка, `text/plain`). `deploy/setup.sh` уже передаёт `GIT_SHA` при
+  сборке.
+
+**Как этим пользоваться исполнителю (обязательно для всех следующих
+шагов):**
+- Перед тем как сказать «PR готов» — проверки CI в PR зелёные (читать
+  через GitHub-инструменты: check runs PR). Красный CI — чинить, не
+  отдавать человеку.
+- После мержа PR человеком: через ~3 минуты
+  `curl -s https://<адрес сервера>/health` должен вернуть
+  `ok <sha мерж-коммита>`. Не совпало за 10 минут — сообщить человеку
+  (деплой упал; лог на сервере: `journalctl -u maxhackathon-update`).
+
+**Критерий готовности:** в PR с этим шагом job `ci / backend` зелёный;
+локально `GIT_SHA=abc docker compose up --build` → `/health` отвечает
+`ok abc`; без `GIT_SHA` — `ok dev`.
+
+**Коммит:** `ci: тесты и сборка образа в GitHub Actions, версия в /health`
 
 ---
 
