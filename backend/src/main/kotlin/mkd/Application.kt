@@ -39,6 +39,8 @@ fun main() {
     val max = MaxBotClient(cfg.maxToken, cfg.maxApiBase)
     val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
     val acts = ActService(cfg, max, gigaChat)
+    val timers = TimerService(cfg, max)
+    scope.launch { timers.loop() }
 
     var bot: Bot? = null
     if (cfg.maxToken.isNotBlank()) {
