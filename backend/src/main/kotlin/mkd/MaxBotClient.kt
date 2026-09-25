@@ -5,6 +5,7 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.delete
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
@@ -58,6 +59,12 @@ fun link(text: String, url: String) = Button("link", text, url = url)
 @Serializable data class Attachment(val type: String, val payload: kotlinx.serialization.json.JsonElement)
 @Serializable data class SendMessageRequest(val text: String? = null, val attachments: List<Attachment> = emptyList())
 @Serializable data class AnswerRequest(val notification: String)
+
+@Serializable data class SubscriptionDto(val url: String)
+@Serializable data class SubscriptionsResponse(val subscriptions: List<SubscriptionDto> = emptyList())
+@Serializable data class SubscribeRequest(val url: String, @SerialName("update_types") val updateTypes: List<String>)
+
+private val webhookUpdateTypes = listOf("message_created", "message_callback", "bot_started")
 
 lateinit var botUsername: String
 
@@ -158,4 +165,26 @@ class MaxBotClient(private val token: String, private val base: String) {
     }
 
     suspend fun download(url: String): ByteArray = http.get(url).body()
+
+    suspend fun subscriptions(): List<String> {
+        val response: SubscriptionsResponse = http.get("$base/subscriptions") {
+            header(HttpHeaders.Authorization, token)
+        }.body()
+        return response.subscriptions.map { it.url }
+    }
+
+    suspend fun subscribe(url: String) {
+        http.post("$base/subscriptions") {
+            header(HttpHeaders.Authorization, token)
+            contentType(ContentType.Application.Json)
+            setBody(SubscribeRequest(url, webhookUpdateTypes))
+        }
+    }
+
+    suspend fun unsubscribe(url: String) {
+        http.delete("$base/subscriptions") {
+            header(HttpHeaders.Authorization, token)
+            url { parameters.append("url", url) }
+        }
+    }
 }
