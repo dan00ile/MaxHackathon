@@ -59,6 +59,8 @@ fun link(text: String, url: String) = Button("link", text, url = url)
 @Serializable data class SendMessageRequest(val text: String? = null, val attachments: List<Attachment> = emptyList())
 @Serializable data class AnswerRequest(val notification: String)
 
+lateinit var botUsername: String
+
 class MaxBotClient(private val token: String, private val base: String) {
     private val log = org.slf4j.LoggerFactory.getLogger(MaxBotClient::class.java)
 
