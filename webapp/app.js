@@ -53,7 +53,7 @@ const STATUS_RU = {
   SILENT: "Принят молчаливым согласием",
 };
 
-let state = { me: null, act: null };
+let state = { me: null, act: null, tab: "checklist" };
 
 function startParam() {
   if (WA && WA.initDataUnsafe && WA.initDataUnsafe.start_param) return WA.initDataUnsafe.start_param;
@@ -121,8 +121,129 @@ function render() {
     else app.textContent = "Председатель ещё готовит акт к проверке.";
     return;
   }
+  if (act.isChairman && (act.status === "COLLECTING" || act.status === "REVIEW")) {
+    renderChairmanTabs(app, act);
+    return;
+  }
   if (act.isResident) { renderChecklist(app, act); return; }
   app.textContent = "Статус: " + statusRu;
+}
+
+function renderChairmanTabs(app, act) {
+  if (state.tab !== "checklist" && state.tab !== "remarks") state.tab = "checklist";
+
+  const tabs = document.createElement("div");
+  tabs.className = "tabs";
+  const checklistTab = document.createElement("button");
+  checklistTab.textContent = "Мой чек-лист";
+  const remarksTab = document.createElement("button");
+  remarksTab.textContent = "Замечания";
+  tabs.append(checklistTab, remarksTab);
+  app.appendChild(tabs);
+
+  const body = document.createElement("div");
+  app.appendChild(body);
+
+  function renderBody() {
+    checklistTab.classList.toggle("active", state.tab === "checklist");
+    remarksTab.classList.toggle("active", state.tab === "remarks");
+    body.innerHTML = "";
+    if (state.tab === "checklist") renderChecklist(body, act);
+    else renderRemarksSummary(body, act);
+  }
+  checklistTab.onclick = () => { state.tab = "checklist"; renderBody(); };
+  remarksTab.onclick = () => { state.tab = "remarks"; renderBody(); };
+  renderBody();
+}
+
+function renderRemarksSummary(app, act) {
+  const err = document.createElement("div");
+  err.className = "error";
+  app.appendChild(err);
+
+  if (act.status === "COLLECTING") {
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Завершить сбор замечаний";
+    closeBtn.onclick = async () => {
+      if (!confirm("После завершения сбора жители больше не смогут отмечать позиции.")) return;
+      err.textContent = "";
+      try { state.act = await api(`/api/acts/${act.id}/close-collection`, { method: "POST" }); render(); }
+      catch (e) { err.textContent = "Ошибка: " + e.message; }
+    };
+    app.appendChild(closeBtn);
+  }
+
+  const items = [...act.items].sort((a, b) => b.stats.issue - a.stats.issue);
+  items.forEach((item) => app.appendChild(renderRemarksItem(item, err)));
+}
+
+function renderRemarksItem(item, err) {
+  const card = document.createElement("div");
+  card.className = "item-card";
+
+  const title = document.createElement("div");
+  title.className = "item-title";
+  title.textContent = `№${item.lineNo} ${item.name}`;
+  card.appendChild(title);
+
+  const agg = document.createElement("div");
+  agg.className = "item-agg";
+  agg.textContent = `Выполнено: ${item.stats.ok}, претензия: ${item.stats.issue} (с фото: ${item.stats.issueWithPhoto})`;
+  card.appendChild(agg);
+
+  (item.remarks || []).filter((r) => r.verdict === "ISSUE").forEach((r) => {
+    const box = document.createElement("div");
+    box.className = "remark-box";
+    const text = document.createElement("p");
+    if (r.llmStatus === "PENDING") text.textContent = "обрабатывается…";
+    else text.textContent = (r.formalized || r.text || "") + (r.llmStatus === "FAILED" ? " (без обработки)" : "");
+    box.appendChild(text);
+    const photosDiv = document.createElement("div");
+    photosDiv.className = "photos";
+    (r.photos || []).forEach((p) => {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      loadImage(p.url, img);
+      photosDiv.appendChild(img);
+    });
+    box.appendChild(photosDiv);
+    card.appendChild(box);
+  });
+
+  const decisionRow = document.createElement("div");
+  const acceptBtn = document.createElement("button");
+  acceptBtn.textContent = "Принять";
+  const disputeBtn = document.createElement("button");
+  disputeBtn.textContent = "Оспорить";
+  decisionRow.append(acceptBtn, disputeBtn);
+  card.appendChild(decisionRow);
+
+  if (item.stats.issueWithPhoto === 0) {
+    disputeBtn.disabled = true;
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = "Нет замечаний с фото — возражать нечем";
+    card.appendChild(note);
+  }
+
+  function refresh() {
+    acceptBtn.classList.toggle("active", item.decision === "ACCEPT");
+    disputeBtn.classList.toggle("active", item.decision === "DISPUTE");
+  }
+  refresh();
+
+  async function setDecision(decision) {
+    err.textContent = "";
+    try {
+      const dto = await api(`/api/items/${item.id}/decision`, { method: "PUT", json: { decision } });
+      item.decision = dto.decision;
+      refresh();
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  }
+  acceptBtn.onclick = () => setDecision("ACCEPT");
+  disputeBtn.onclick = () => setDecision("DISPUTE");
+
+  return card;
 }
 
 function renderChecklist(app, act) {

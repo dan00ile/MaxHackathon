@@ -33,11 +33,6 @@ class RemarkService(
     private val scope: CoroutineScope,
 ) {
 
-    private suspend fun itemActId(itemId: Long): Long = tx {
-        ActItems.select(ActItems.actId).where { ActItems.id eq itemId }.singleOrNull()
-            ?.get(ActItems.actId)?.value ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Позиция не найдена")
-    }
-
     suspend fun saveMy(itemId: Long, userId: Long, verdict: Verdict, text: String?): MyRemarkDto {
         if (verdict == Verdict.ISSUE && ((text?.trim()?.length ?: 0) !in 3..1000)) {
             throw ApiError(HttpStatusCode.BadRequest, "invalid_text", "Опишите замечание текстом от 3 до 1000 символов")

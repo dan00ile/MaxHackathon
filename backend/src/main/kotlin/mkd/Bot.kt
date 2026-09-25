@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.ResultRow
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
@@ -156,6 +157,7 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
                 "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
                 "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
                 "status" -> sendActiveStatus(userId)
+                "close" -> handleClose(userId, arg!!.toLong())
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -296,6 +298,21 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
     private suspend fun handleRcvOther(userId: Long, actId: Long) {
         pending[userId] = Pending.ReceiptDate(actId)
         max.sendText(userId, "Напишите дату в формате ДД.ММ.ГГГГ")
+    }
+
+    private suspend fun handleClose(userId: Long, actId: Long) {
+        try {
+            acts.closeCollection(actId, userId)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+            return
+        }
+        val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
+        val houseId = act[Acts.houseId].value
+        sendStatus(userId, houseId, act)
+        val actNumber = act[Acts.number] ?: "без номера"
+        val residents = tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
+        residents.forEach { uid -> runCatching { max.sendText(uid, "Сбор замечаний по акту № $actNumber завершён. Спасибо!") } }
     }
 
     private suspend fun handleApprove(adminUserId: Long, chairmanRowId: Long) {

@@ -30,6 +30,11 @@ import java.util.UUID
     val items: List<RecognizedItem> = emptyList(),
 )
 
+suspend fun itemActId(itemId: Long): Long = tx {
+    ActItems.select(ActItems.actId).where { ActItems.id eq itemId }.singleOrNull()
+        ?.get(ActItems.actId)?.value ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Позиция не найдена")
+}
+
 object Deadlines {
     val MILESTONES = listOf(0, 7, 10, 25, 28, 29)
 
@@ -169,6 +174,46 @@ class ActService(
             throw ApiError(HttpStatusCode.Forbidden, "forbidden", "Доступно только жителям этого дома")
         }
         act
+    }
+
+    suspend fun closeCollection(actId: Long, userId: Long) {
+        requireChairmanOf(actId, userId)
+        tx {
+            val act = Acts.selectAll().where { Acts.id eq actId }.single()
+            if (act[Acts.status] != ActStatus.COLLECTING) {
+                throw ApiError(HttpStatusCode.Conflict, "not_collecting", "Сбор замечаний уже завершён")
+            }
+            Acts.update({ Acts.id eq actId }) { it[status] = ActStatus.REVIEW }
+            ActItems.selectAll().where { (ActItems.actId eq actId) and (ActItems.decision.isNull()) }.forEach { item ->
+                val itemId = item[ActItems.id].value
+                val issueWithPhoto = Remarks.selectAll().where { Remarks.itemId eq itemId }
+                    .count { it[Remarks.verdict] == Verdict.ISSUE && photosOfTx(it[Remarks.id].value).isNotEmpty() }
+                ActItems.update({ ActItems.id eq itemId }) {
+                    it[decision] = if (issueWithPhoto > 0) Decision.DISPUTE else Decision.ACCEPT
+                }
+            }
+            logEvent(actId, "COLLECTION_CLOSED", userId)
+        }
+    }
+
+    suspend fun setDecision(itemId: Long, userId: Long, decision: Decision) {
+        val actId = itemActId(itemId)
+        requireChairmanOf(actId, userId)
+        tx {
+            val status = Acts.select(Acts.status).where { Acts.id eq actId }.single()[Acts.status]
+            if (status != ActStatus.COLLECTING && status != ActStatus.REVIEW) {
+                throw ApiError(HttpStatusCode.Conflict, "wrong_status", "Решение можно менять только во время сбора замечаний или на этапе решения")
+            }
+            if (decision == Decision.DISPUTE) {
+                val issueWithPhoto = Remarks.selectAll().where { Remarks.itemId eq itemId }
+                    .count { it[Remarks.verdict] == Verdict.ISSUE && photosOfTx(it[Remarks.id].value).isNotEmpty() }
+                if (issueWithPhoto == 0) {
+                    throw ApiError(HttpStatusCode.Conflict, "no_evidence", "По позиции нет замечаний с фото — оснований для возражения недостаточно")
+                }
+            }
+            ActItems.update({ ActItems.id eq itemId }) { it[ActItems.decision] = decision }
+            logEvent(actId, "DECISION_SET", userId, "itemId=$itemId; decision=$decision")
+        }
     }
 
     suspend fun recognize(actId: Long) {
