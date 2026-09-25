@@ -180,7 +180,7 @@ private suspend fun actDto(cfg: Config, actId: Long, userId: Long): ActDto = tx 
     )
 }
 
-fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService) {
+fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService, refusal: RefusalService) {
     get("/api/acts/{id}") {
         val auth = call.authUser(cfg)
         val actId = call.parameters["id"]!!.toLong()
@@ -320,6 +320,32 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
         }
         acts.setDecision(itemId, auth.userId, decision)
         call.respond(itemDto(itemId, auth.userId))
+    }
+
+    post("/api/acts/{id}/refusal/draft") {
+        val auth = call.authUser(cfg)
+        val actId = call.parameters["id"]!!.toLong()
+        val rebuild = call.request.queryParameters["rebuild"]?.toBoolean() ?: false
+        call.respond(refusal.draft(actId, auth.userId, rebuild))
+    }
+
+    get("/api/acts/{id}/refusal") {
+        val auth = call.authUser(cfg)
+        val actId = call.parameters["id"]!!.toLong()
+        call.respond(refusal.get(actId, auth.userId))
+    }
+
+    put("/api/acts/{id}/refusal") {
+        val auth = call.authUser(cfg)
+        val actId = call.parameters["id"]!!.toLong()
+        val input = call.receive<RefusalEdit>()
+        call.respond(refusal.edit(actId, auth.userId, input))
+    }
+
+    post("/api/acts/{id}/refusal/confirm") {
+        val auth = call.authUser(cfg)
+        val actId = call.parameters["id"]!!.toLong()
+        call.respond(refusal.confirm(actId, auth.userId))
     }
 
     get("/api/me") {

@@ -34,7 +34,10 @@ private const val CONSENT_TEXT = "Бот помогает совету дома 
 
 private val receiptDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
-class Bot(private val cfg: Config, private val max: MaxBotClient, private val acts: ActService, private val scope: CoroutineScope) {
+class Bot(
+    private val cfg: Config, private val max: MaxBotClient, private val acts: ActService,
+    private val refusal: RefusalService, private val scope: CoroutineScope,
+) {
     private val log = LoggerFactory.getLogger(Bot::class.java)
     private val pending = ConcurrentHashMap<Long, Pending>()
 
@@ -158,6 +161,10 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
                 "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
                 "status" -> sendActiveStatus(userId)
                 "close" -> handleClose(userId, arg!!.toLong())
+                "sign" -> handleSignPrompt(userId, arg!!.toLong())
+                "sign_ok" -> handleSignOk(userId, arg!!.toLong())
+                "refuse" -> handleRefuse(userId, arg!!.toLong())
+                "sent" -> handleSent(userId, arg!!.toLong())
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -313,6 +320,42 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
         val actNumber = act[Acts.number] ?: "без номера"
         val residents = tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
         residents.forEach { uid -> runCatching { max.sendText(uid, "Сбор замечаний по акту № $actNumber завершён. Спасибо!") } }
+    }
+
+    private suspend fun handleSignPrompt(userId: Long, actId: Long) {
+        val disputed = tx { ActItems.selectAll().where { (ActItems.actId eq actId) and (ActItems.decision eq Decision.DISPUTE) }.count() }
+        var text = "Подписать акт без возражений? Оспариваемых позиций: $disputed."
+        if (disputed > 0) text += "\nЗамечания жителей в документ не попадут."
+        max.sendText(userId, text, listOf(listOf(cb("Да, подписать", "sign_ok:$actId")), listOf(cb("Нет", "status"))))
+    }
+
+    private suspend fun handleSignOk(userId: Long, actId: Long) {
+        try {
+            acts.sign(actId, userId)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+        }
+    }
+
+    private suspend fun handleRefuse(userId: Long, actId: Long) {
+        val dto = try {
+            refusal.draft(actId, userId, rebuild = false)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+            return
+        }
+        max.sendText(
+            userId, "Черновик отказа готов: возражений — ${dto.objections.size}. Проверьте формулировки и подтвердите.",
+            listOf(listOf(link("Открыть черновик", appLink("refusal_$actId")))),
+        )
+    }
+
+    private suspend fun handleSent(userId: Long, actId: Long) {
+        try {
+            refusal.markSent(actId, userId)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+        }
     }
 
     private suspend fun handleApprove(adminUserId: Long, chairmanRowId: Long) {

@@ -41,6 +41,7 @@ fun main() {
     val timers = TimerService(cfg, max)
     val acts = ActService(cfg, max, gigaChat, timers)
     val remarks = RemarkService(cfg, acts, gigaChat, scope)
+    val refusal = RefusalService(cfg, max, remarks, acts)
     scope.launch { timers.loop() }
 
     var bot: Bot? = null
@@ -50,7 +51,7 @@ fun main() {
         }
         botUsername = me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
         log.info("MAX bot me(): {}, botUsername={}", me, botUsername)
-        val botInstance = Bot(cfg, max, acts, scope)
+        val botInstance = Bot(cfg, max, acts, refusal, scope)
         bot = botInstance
 
         if (cfg.publicUrl.isNotBlank()) {
@@ -101,7 +102,7 @@ fun main() {
                     bot?.let { b -> scope.launch { runCatching { b.handle(update) }.onFailure { log.error("update", it) } } }
                 }
             }
-            api(cfg, max, acts, remarks)
+            api(cfg, max, acts, remarks, refusal)
         }
     }.start(wait = true)
 }
