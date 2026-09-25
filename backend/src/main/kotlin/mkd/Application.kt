@@ -40,7 +40,7 @@ fun main() {
     val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
     val timers = TimerService(cfg, max)
     val acts = ActService(cfg, max, gigaChat, timers)
-    val remarks = RemarkService(cfg, acts)
+    val remarks = RemarkService(cfg, acts, gigaChat, scope)
     scope.launch { timers.loop() }
 
     var bot: Bot? = null
