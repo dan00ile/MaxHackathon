@@ -2,7 +2,7 @@ package mkd
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -62,7 +62,7 @@ fun link(text: String, url: String) = Button("link", text, url = url)
 class MaxBotClient(private val token: String, private val base: String) {
     private val log = org.slf4j.LoggerFactory.getLogger(MaxBotClient::class.java)
 
-    private val http = HttpClient(CIO) {
+    private val http = HttpClient(Java) {
         install(ContentNegotiation) { json(AppJson) }
         install(HttpTimeout) { requestTimeoutMillis = 45_000 }
     }
