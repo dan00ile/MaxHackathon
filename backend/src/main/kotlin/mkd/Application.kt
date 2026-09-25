@@ -82,7 +82,7 @@ fun main() {
             allowMethod(HttpMethod.Put)
         }
         routing {
-            get("/health") { call.respondText("ok") }
+            get("/health") { call.respondText("ok ${System.getenv("GIT_SHA") ?: "dev"}") }
             if (cfg.webhookSecret.isNotBlank()) {
                 post("/webhook/max/{secret}") {
                     val secret = call.parameters["secret"] ?: ""

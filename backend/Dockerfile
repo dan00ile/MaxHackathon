@@ -10,5 +10,7 @@ COPY certs/russian_trusted_root_ca.cer /tmp/ru_root.cer
 RUN keytool -importcert -noprompt -cacerts -storepass changeit -alias ru_root -file /tmp/ru_root.cer
 COPY --from=build /src/build/install/backend /app
 ENV FILES_DIR=/data/files
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 EXPOSE 8080
 CMD ["/app/bin/backend"]
