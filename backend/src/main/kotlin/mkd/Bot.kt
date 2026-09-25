@@ -1,6 +1,12 @@
 package mkd
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
@@ -8,6 +14,8 @@ import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 
 sealed interface Pending {
@@ -22,7 +30,9 @@ private const val CONSENT_TEXT = "Бот помогает совету дома 
     "Мы храним ваше имя в MAX, привязку к дому и ваши отметки по акту. " +
     "Нажимая кнопку, вы соглашаетесь на обработку этих данных."
 
-class Bot(private val cfg: Config, private val max: MaxBotClient) {
+private val receiptDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+
+class Bot(private val cfg: Config, private val max: MaxBotClient, private val acts: ActService, private val scope: CoroutineScope) {
     private val log = LoggerFactory.getLogger(Bot::class.java)
     private val pending = ConcurrentHashMap<Long, Pending>()
 
@@ -53,16 +63,84 @@ class Bot(private val cfg: Config, private val max: MaxBotClient) {
     private suspend fun onMessage(u: Update) {
         val message = u.message ?: return
         val userId = message.sender?.userId ?: return
-        val text = message.body.text?.trim() ?: return   // вложения акта — S9
+        val attachment = firstActAttachment(message.body.attachments)
+        if (attachment != null) {
+            handleActUpload(userId, message.timestamp, message.body.mid, attachment.first, attachment.second)
+            return
+        }
+        val text = message.body.text?.trim() ?: return
         when (val p = pending[userId]) {
             is Pending.ChairFio -> handleChairFioText(userId, p.houseId, text)
             is Pending.ChairBasis -> handleChairBasisText(userId, p.houseId, p.fio, text)
-            is Pending.ReceiptDate -> Unit // S9
+            is Pending.ReceiptDate -> handleReceiptDateText(userId, p.actId, text)
             null -> when (text) {
                 "/start", "/menu" -> entryPoint(userId)
                 else -> Unit
             }
         }
+    }
+
+    private fun firstActAttachment(attachments: List<JsonObject>): Pair<String, String>? {
+        val att = attachments.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull in listOf("file", "image") } ?: return null
+        val type = att["type"]!!.jsonPrimitive.content
+        val url = att["payload"]!!.jsonObject["url"]!!.jsonPrimitive.content
+        val fileName = att["filename"]?.jsonPrimitive?.contentOrNull ?: if (type == "image") "photo.jpg" else "act.pdf"
+        return url to fileName
+    }
+
+    private fun mimeOf(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
+        "pdf" -> "application/pdf"
+        "png" -> "image/png"
+        else -> "image/jpeg"
+    }
+
+    private suspend fun handleActUpload(userId: Long, timestampMs: Long, mid: String, url: String, fileName: String) {
+        val roles = rolesOf(userId)
+        if (!roles.chairman) {
+            max.sendText(userId, "Загружать акт может только председатель совета дома.")
+            return
+        }
+        val houseId = roles.houseId!!
+        val active = acts.activeAct(houseId)
+        if (active != null) {
+            max.sendText(userId, "Сначала завершите текущий акт № ${active[Acts.id].value} (подпишите или направьте отказ).")
+            return
+        }
+        val bytes = max.download(url)
+        val receivedAt = Instant.ofEpochMilli(timestampMs)
+        val actId = acts.createFromUpload(userId, houseId, bytes, fileName, mimeOf(fileName), receivedAt, mid)
+        val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(cfg.zone)
+        max.sendText(
+            userId, "Акт получен ${fmt.format(receivedAt)}. Когда вы получили этот акт от УК?",
+            listOf(listOf(cb("Сегодня", "rcv_today:$actId")), listOf(cb("Другая дата", "rcv_other:$actId"))),
+        )
+    }
+
+    private suspend fun handleReceiptDateText(userId: Long, actId: Long, text: String) {
+        val date = runCatching { LocalDate.parse(text.trim(), receiptDateFormat) }.getOrNull()
+        if (date == null) {
+            max.sendText(userId, "Не получилось разобрать дату. Напишите в формате ДД.ММ.ГГГГ, например 20.09.2026")
+            return
+        }
+        pending.remove(userId)
+        try {
+            acts.setReceiptDate(actId, userId, date)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+            return
+        }
+        finalizeReceipt(userId, actId)
+    }
+
+    private suspend fun finalizeReceipt(userId: Long, actId: Long) {
+        val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
+        tx { logEvent(actId, "NOTIFY_D0", null) }
+        max.sendText(
+            userId,
+            "Срок по приказу (10 дней): до ${receiptDateFormat.format(act[Acts.deadline10])}\n" +
+                "Защитный срок (30 дней): до ${receiptDateFormat.format(act[Acts.deadline30])}",
+        )
+        scope.launch { runCatching { acts.recognize(actId) }.onFailure { log.error("recognize", it) } }
     }
 
     private suspend fun onCallback(u: Update) {
@@ -76,6 +154,8 @@ class Bot(private val cfg: Config, private val max: MaxBotClient) {
                 "role_res" -> handleRoleResident(userId, arg!!.toLong())
                 "role_chair" -> handleRoleChairman(userId, arg!!.toLong())
                 "approve" -> handleApprove(userId, arg!!.toLong())
+                "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
+                "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -167,6 +247,11 @@ class Bot(private val cfg: Config, private val max: MaxBotClient) {
                 )
             }
         }
+    }
+
+    private suspend fun handleRcvOther(userId: Long, actId: Long) {
+        pending[userId] = Pending.ReceiptDate(actId)
+        max.sendText(userId, "Напишите дату в формате ДД.ММ.ГГГГ")
     }
 
     private suspend fun handleApprove(adminUserId: Long, chairmanRowId: Long) {
