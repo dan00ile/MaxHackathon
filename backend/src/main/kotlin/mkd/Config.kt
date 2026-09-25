@@ -5,7 +5,7 @@ import java.time.ZoneId
 data class Config(
     val port: Int,
     val dbUrl: String, val dbUser: String, val dbPassword: String,
-    val maxToken: String, val maxBotUsername: String, val maxApiBase: String,
+    val maxToken: String, val maxApiBase: String,
     val gigaAuthKey: String, val gigaScope: String, val gigaModel: String,
     val corsOrigin: String,          // https://<user>.github.io
     val adminUserIds: Set<Long>,
@@ -23,7 +23,6 @@ data class Config(
                 dbUser = env("DB_USER", "mkd"),
                 dbPassword = env("DB_PASSWORD", "mkd"),
                 maxToken = env("MAX_BOT_TOKEN", ""),
-                maxBotUsername = env("MAX_BOT_USERNAME", ""),
                 maxApiBase = env("MAX_API_BASE", "https://platform-api2.max.ru"),
                 gigaAuthKey = env("GIGACHAT_AUTH_KEY", ""),
                 gigaScope = env("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),

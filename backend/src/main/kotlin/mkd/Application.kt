@@ -18,7 +18,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 
 val AppJson = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
@@ -32,6 +34,11 @@ fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     if (cfg.maxToken.isNotBlank()) {
         val max = MaxBotClient(cfg.maxToken, cfg.maxApiBase)
+        val me = runBlocking {
+            runCatching { max.me() }.getOrElse { error("неверный MAX_BOT_TOKEN: ${it.message}") }
+        }
+        botUsername = me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
+        log.info("MAX bot me(): {}, botUsername={}", me, botUsername)
         val bot = Bot(max)
         scope.launch { bot.pollLoop() }
     } else {
