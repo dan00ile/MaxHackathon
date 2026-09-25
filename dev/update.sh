@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # dev/update.sh text "/start" | dev/update.sh callback "status" | dev/update.sh file <url> <name>
-# Шлёт в локальный бэкенд событие MAX от лица DEV_MAX_USER_ID (см. .env.example).
+# Шлёт событие MAX от лица DEV_MAX_USER_ID (см. .env.example) на TARGET
+# (по умолчанию локальный бэкенд; TARGET=https://<сервер> — на боевой, только
+# для сквозных проверок после мержа, не для отладки).
 # Ответ бота уходит настоящим вызовом MAX Bot API — придёт человеку в MAX.
 set -euo pipefail
 
-BACKEND_URL="${BACKEND_URL:-http://localhost:8080}"
+TARGET="${TARGET:-http://localhost:8080}"
 USER_ID="${DEV_MAX_USER_ID:?Задайте DEV_MAX_USER_ID (user_id в MAX, от чьего имени слать событие)}"
 SECRET="${WEBHOOK_SECRET:?Задайте WEBHOOK_SECRET (тот же, что в backend/.env)}"
 KIND="${1:?Использование: dev/update.sh text|callback|file ...}"
@@ -36,5 +38,5 @@ case "$KIND" in
     ;;
 esac
 
-curl -sS -X POST "$BACKEND_URL/webhook/max/$SECRET" -H 'Content-Type: application/json' -d "$BODY"
+curl -sS -X POST "$TARGET/webhook/max/$SECRET" -H 'Content-Type: application/json' -d "$BODY"
 echo
