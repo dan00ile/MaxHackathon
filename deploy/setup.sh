@@ -43,12 +43,16 @@ if [ ! -f .env ]; then
   set_env CORS_ORIGIN "https://dan00ile.github.io"
 fi
 
+# HTTPS-адрес <ip>.sslip.io (домен не нужен); он же адрес webhook бота
+IP=$(curl -fsS https://api.ipify.org)
+HOST="${IP//./-}.sslip.io"
+set_env PUBLIC_URL "https://$HOST"
+grep -q '^WEBHOOK_SECRET=.\{32,\}' .env || set_env WEBHOOK_SECRET "$(openssl rand -hex 24)"
+
 docker compose up -d --build
 git rev-parse HEAD > .deployed
 
-# HTTPS: Caddy в контейнере, сертификат Let's Encrypt на <ip>.sslip.io (домен не нужен)
-IP=$(curl -fsS https://api.ipify.org)
-HOST="${IP//./-}.sslip.io"
+# Caddy в контейнере, сертификат Let's Encrypt
 docker rm -f caddy >/dev/null 2>&1 || true
 docker run -d --name caddy --restart unless-stopped --network host -v caddy_data:/data \
   caddy:2 caddy reverse-proxy --from "$HOST" --to localhost:8080
