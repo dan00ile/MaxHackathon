@@ -17,6 +17,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 @Serializable data class Objection(
     val itemId: Long, val lineNo: Int, val itemName: String,
@@ -225,6 +226,47 @@ class RefusalService(
         )
 
         return tx { refusalDtoOf(Refusals.selectAll().where { Refusals.actId eq actId }.single()) }
+    }
+
+    suspend fun markSent(actId: Long, userId: Long) {
+        val act = acts.requireChairmanOf(actId, userId)
+        val row = tx { Refusals.selectAll().where { Refusals.actId eq actId }.singleOrNull() }
+            ?: throw ApiError(HttpStatusCode.NotFound, "no_refusal", "Черновик отказа не найден")
+        if (row[Refusals.confirmedAt] == null) {
+            throw ApiError(HttpStatusCode.Conflict, "not_confirmed", "Сначала подтвердите отказ")
+        }
+        val dateTimeFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(cfg.zone)
+        val alreadySentAt = row[Refusals.sentAt]
+        if (alreadySentAt != null) {
+            throw ApiError(HttpStatusCode.Conflict, "already_sent", "Уже отмечено ${dateTimeFmt.format(alreadySentAt)}")
+        }
+
+        val houseId = act[Acts.houseId].value
+        val uk = tx {
+            val house = Houses.selectAll().where { Houses.id eq houseId }.single()
+            ManagementCompanies.selectAll().where { ManagementCompanies.id eq house[Houses.ukId].value }.single()
+        }
+        val sentAt = Instant.now()
+        tx {
+            Refusals.update({ Refusals.actId eq actId }) { it[Refusals.sentAt] = sentAt }
+            Acts.update({ Acts.id eq actId }) { it[status] = ActStatus.REJECTED }
+            logEvent(actId, "REFUSAL_SENT", userId, "method=${uk[ManagementCompanies.exchangeMethod]}")
+        }
+
+        max.sendText(
+            userId,
+            "Время отправки зафиксировано: ${dateTimeFmt.format(sentAt)}. Акт в статусе «Отказ направлен, ожидается новый акт». " +
+                "Когда УК пришлёт новый акт — просто загрузите его сюда.",
+        )
+
+        val objectionsCount = AppJson.decodeFromString<RefusalDraft>(row[Refusals.draftJson]).objections.size
+        val number = act[Acts.number] ?: "без номера"
+        val residents = tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
+        residents.forEach { uid ->
+            runCatching {
+                max.sendText(uid, "Председатель направил в УК мотивированный отказ по акту № $number (оспорено позиций: $objectionsCount). Спасибо за ваши отметки!")
+            }
+        }
     }
 
     private suspend fun draftItemsOf(actId: Long): List<DraftItem> = tx {

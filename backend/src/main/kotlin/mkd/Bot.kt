@@ -164,6 +164,7 @@ class Bot(
                 "sign" -> handleSignPrompt(userId, arg!!.toLong())
                 "sign_ok" -> handleSignOk(userId, arg!!.toLong())
                 "refuse" -> handleRefuse(userId, arg!!.toLong())
+                "sent" -> handleSent(userId, arg!!.toLong())
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -347,6 +348,14 @@ class Bot(
             userId, "Черновик отказа готов: возражений — ${dto.objections.size}. Проверьте формулировки и подтвердите.",
             listOf(listOf(link("Открыть черновик", appLink("refusal_$actId")))),
         )
+    }
+
+    private suspend fun handleSent(userId: Long, actId: Long) {
+        try {
+            refusal.markSent(actId, userId)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+        }
     }
 
     private suspend fun handleApprove(adminUserId: Long, chairmanRowId: Long) {
