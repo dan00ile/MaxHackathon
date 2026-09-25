@@ -8,6 +8,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
@@ -75,6 +76,7 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
             is Pending.ReceiptDate -> handleReceiptDateText(userId, p.actId, text)
             null -> when {
                 text == "/start" || text == "/menu" -> entryPoint(userId)
+                text == "/status" -> sendActiveStatus(userId)
                 text.startsWith("/shift") -> handleShift(userId, text)
                 else -> Unit
             }
@@ -136,11 +138,7 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
     private suspend fun finalizeReceipt(userId: Long, actId: Long) {
         val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
         tx { logEvent(actId, "NOTIFY_D0", null) }
-        max.sendText(
-            userId,
-            "Срок по приказу (10 дней): до ${receiptDateFormat.format(act[Acts.deadline10])}\n" +
-                "Защитный срок (30 дней): до ${receiptDateFormat.format(act[Acts.deadline30])}",
-        )
+        sendStatus(userId, act[Acts.houseId].value, act)
         scope.launch { runCatching { acts.recognize(actId) }.onFailure { log.error("recognize", it) } }
     }
 
@@ -157,6 +155,7 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
                 "approve" -> handleApprove(userId, arg!!.toLong())
                 "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
                 "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
+                "status" -> sendActiveStatus(userId)
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -268,9 +267,30 @@ class Bot(private val cfg: Config, private val max: MaxBotClient, private val ac
             max.sendText(userId, e.message)
             return
         }
-        // ponytail: полноценный statusText/statusButtons появится в S15, здесь — минимальный ответ
         val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
-        max.sendText(userId, "Статус акта № ${act[Acts.number] ?: "без номера"}: ${act[Acts.status]}")
+        sendStatus(userId, houseId, act)
+    }
+
+    private suspend fun sendActiveStatus(userId: Long) {
+        val houseId = rolesOf(userId).houseId
+        if (houseId == null) {
+            max.sendText(userId, "Сначала выберите дом.")
+            return
+        }
+        val act = acts.activeAct(houseId) ?: acts.lastAct(houseId)
+        if (act == null) {
+            max.sendText(userId, "Активного акта нет.")
+            return
+        }
+        sendStatus(userId, houseId, act)
+    }
+
+    private suspend fun sendStatus(userId: Long, houseId: Long, act: ResultRow) {
+        val address = tx { Houses.select(Houses.address).where { Houses.id eq houseId }.single()[Houses.address] }
+        val roles = rolesOf(userId)
+        val eventAt = acts.terminalEventAt(act[Acts.id].value, act[Acts.status])
+        val text = statusText(act, address, Instant.now(), cfg.zone, eventAt)
+        max.sendText(userId, text, statusButtons(cfg, act, roles.chairman, roles.resident))
     }
 
     private suspend fun handleRcvOther(userId: Long, actId: Long) {
