@@ -17,6 +17,7 @@ import java.nio.file.Path
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -214,6 +215,56 @@ class ActService(
             ActItems.update({ ActItems.id eq itemId }) { it[ActItems.decision] = decision }
             logEvent(actId, "DECISION_SET", userId, "itemId=$itemId; decision=$decision")
         }
+    }
+
+    suspend fun sign(actId: Long, userId: Long) {
+        requireChairmanOf(actId, userId)
+        val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
+        if (act[Acts.status] != ActStatus.COLLECTING && act[Acts.status] != ActStatus.REVIEW) {
+            throw ApiError(HttpStatusCode.Conflict, "wrong_status", "Акт уже подписан, направлен отказ или принят молчаливым согласием")
+        }
+        if (act[Acts.status] == ActStatus.COLLECTING) closeCollection(actId, userId)
+
+        val houseId = act[Acts.houseId].value
+        val house = tx { Houses.selectAll().where { Houses.id eq houseId }.single() }
+        val uk = tx { ManagementCompanies.selectAll().where { ManagementCompanies.id eq house[Houses.ukId].value }.single() }
+        val chairman = tx { Chairmen.selectAll().where { (Chairmen.userId eq userId) and (Chairmen.houseId eq houseId) }.single() }
+        val items = tx { ActItems.selectAll().where { ActItems.actId eq actId }.orderBy(ActItems.lineNo to SortOrder.ASC).toList() }
+
+        val signedAt = ZonedDateTime.now(cfg.zone)
+        val bytes = Pdf.signedAct(
+            SignedActData(
+                houseAddress = house[Houses.address],
+                ukName = uk[ManagementCompanies.name],
+                actNumber = act[Acts.number],
+                formedDate = act[Acts.formedDate],
+                period = act[Acts.period],
+                items = items.map { ItemRow(it[ActItems.lineNo], it[ActItems.name], it[ActItems.periodicity], it[ActItems.volume], it[ActItems.cost]) },
+                chairmanFio = chairman[Chairmen.fullName],
+                signedAt = signedAt,
+                demo = cfg.demoMode,
+            ),
+        )
+        val dir = Path.of(cfg.filesDir, "pdf")
+        Files.createDirectories(dir)
+        val pdfPath = dir.resolve("act-$actId-signed.pdf")
+        Files.write(pdfPath, bytes)
+
+        tx {
+            Acts.update({ Acts.id eq actId }) {
+                it[signedPdfPath] = pdfPath.toString()
+                it[status] = ActStatus.SIGNED
+            }
+            logEvent(actId, "SIGNED", userId, "stub=true")
+        }
+
+        val number = act[Acts.number] ?: "без номера"
+        max.sendFile(
+            userId, bytes, "akt-$number-podpisan.pdf",
+            "Акт подписан. Перешлите этот файл в УК (${uk[ManagementCompanies.exchangeMethod]}) — это ваш подписанный экземпляр.",
+        )
+        val residents = tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
+        residents.forEach { uid -> runCatching { max.sendText(uid, "Председатель подписал акт № $number без возражений.") } }
     }
 
     suspend fun recognize(actId: Long) {

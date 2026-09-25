@@ -14,7 +14,12 @@ async function api(path, opts = {}) {
   const headers = { ...authHeaders(), ...(opts.headers || {}) };
   if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
   const r = await fetch(window.API_BASE + path, { ...opts, headers });
-  if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ message: r.statusText }));
+    const err = new Error(e.message);
+    err.code = e.error;
+    throw err;
+  }
   return r.status === 204 ? null : r.json();
 }
 
@@ -76,7 +81,9 @@ async function start() {
   }
 
   const sp = startParam();
-  const actId = sp && sp.startsWith("act_") ? Number(sp.slice(4)) : state.me.activeActId;
+  let actId = state.me.activeActId;
+  if (sp && sp.startsWith("act_")) actId = Number(sp.slice(4));
+  else if (sp && sp.startsWith("refusal_")) { actId = Number(sp.slice(8)); state.tab = "refusal"; }
   if (!actId) {
     app.textContent = "Активного акта нет";
     return;
@@ -130,7 +137,9 @@ function render() {
 }
 
 function renderChairmanTabs(app, act) {
-  if (state.tab !== "checklist" && state.tab !== "remarks") state.tab = "checklist";
+  const hasRefusalTab = act.status === "REVIEW";
+  if (state.tab === "refusal" && !hasRefusalTab) state.tab = "checklist";
+  if (!["checklist", "remarks", "refusal"].includes(state.tab)) state.tab = "checklist";
 
   const tabs = document.createElement("div");
   tabs.className = "tabs";
@@ -139,6 +148,12 @@ function renderChairmanTabs(app, act) {
   const remarksTab = document.createElement("button");
   remarksTab.textContent = "Замечания";
   tabs.append(checklistTab, remarksTab);
+  let refusalTab = null;
+  if (hasRefusalTab) {
+    refusalTab = document.createElement("button");
+    refusalTab.textContent = "Отказ";
+    tabs.append(refusalTab);
+  }
   app.appendChild(tabs);
 
   const body = document.createElement("div");
@@ -147,13 +162,155 @@ function renderChairmanTabs(app, act) {
   function renderBody() {
     checklistTab.classList.toggle("active", state.tab === "checklist");
     remarksTab.classList.toggle("active", state.tab === "remarks");
+    if (refusalTab) refusalTab.classList.toggle("active", state.tab === "refusal");
     body.innerHTML = "";
     if (state.tab === "checklist") renderChecklist(body, act);
-    else renderRemarksSummary(body, act);
+    else if (state.tab === "remarks") renderRemarksSummary(body, act);
+    else renderRefusalTab(body, act);
   }
   checklistTab.onclick = () => { state.tab = "checklist"; renderBody(); };
   remarksTab.onclick = () => { state.tab = "remarks"; renderBody(); };
+  if (refusalTab) refusalTab.onclick = () => { state.tab = "refusal"; renderBody(); };
   renderBody();
+}
+
+function renderRefusalTab(app, act) {
+  app.textContent = "Загрузка…";
+  api(`/api/acts/${act.id}/refusal`)
+    .then((dto) => { app.innerHTML = ""; renderRefusalForm(app, act, dto); })
+    .catch((e) => {
+      app.innerHTML = "";
+      if (e.code === "no_refusal") renderRefusalEmpty(app, act);
+      else {
+        const err = document.createElement("div");
+        err.className = "error";
+        err.textContent = "Ошибка: " + e.message;
+        app.appendChild(err);
+      }
+    });
+}
+
+function renderRefusalEmpty(app, act) {
+  const err = document.createElement("div");
+  err.className = "error";
+  const btn = document.createElement("button");
+  btn.textContent = "Собрать черновик";
+  btn.onclick = async () => {
+    err.textContent = "";
+    try {
+      const dto = await api(`/api/acts/${act.id}/refusal/draft?rebuild=false`, { method: "POST" });
+      app.innerHTML = "";
+      renderRefusalForm(app, act, dto);
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+  app.append(btn, err);
+}
+
+function renderRefusalForm(app, act, dto) {
+  if (dto.confirmedAt) { renderRefusalConfirmed(app, dto); return; }
+
+  const err = document.createElement("div");
+  err.className = "error";
+  app.appendChild(err);
+
+  const placeField = field("Место составления", dto.place);
+  app.appendChild(placeField.wrap);
+
+  const objectionInputs = dto.objections.map((o) => {
+    const wrap = document.createElement("div");
+    wrap.className = "item-card";
+
+    const title = document.createElement("div");
+    title.className = "item-title";
+    title.textContent = `№${o.lineNo} ${o.itemName}`;
+    wrap.appendChild(title);
+
+    const factLabel = document.createElement("label");
+    factLabel.textContent = "Фактически";
+    const factArea = document.createElement("textarea");
+    factArea.value = o.fact;
+    wrap.append(factLabel, factArea);
+
+    const groundP = document.createElement("p");
+    groundP.className = "hint";
+    groundP.textContent = `Основание (из справочника оснований): ${o.groundText} (${o.groundRef})`;
+    wrap.appendChild(groundP);
+
+    const demandLabel = document.createElement("label");
+    demandLabel.textContent = "Требование";
+    const demandArea = document.createElement("textarea");
+    demandArea.value = o.demand;
+    wrap.append(demandLabel, demandArea);
+
+    const counters = document.createElement("div");
+    counters.className = "item-agg";
+    counters.textContent = `Выполнено: ${o.okCount}, претензия: ${o.issueCount}, фото: ${o.photoCount}`;
+    wrap.appendChild(counters);
+
+    app.appendChild(wrap);
+    return { itemId: o.itemId, factArea, demandArea };
+  });
+
+  if (dto.noObjectionLineNos.length > 0) {
+    const p = document.createElement("p");
+    p.textContent = `По позициям № ${dto.noObjectionLineNos.join(", ")} возражений не имеется.`;
+    app.appendChild(p);
+  }
+
+  function currentEdit() {
+    return {
+      place: placeField.input.value,
+      objections: objectionInputs.map((o) => ({ itemId: o.itemId, fact: o.factArea.value, demand: o.demandArea.value })),
+    };
+  }
+
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Сохранить";
+  saveBtn.onclick = async () => {
+    err.textContent = "";
+    try {
+      const updated = await api(`/api/acts/${act.id}/refusal`, { method: "PUT", json: currentEdit() });
+      app.innerHTML = "";
+      renderRefusalForm(app, act, updated);
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  const rebuildBtn = document.createElement("button");
+  rebuildBtn.textContent = "Пересобрать из замечаний";
+  rebuildBtn.onclick = async () => {
+    if (!confirm("Ваши правки будут потеряны.")) return;
+    err.textContent = "";
+    try {
+      const updated = await api(`/api/acts/${act.id}/refusal/draft?rebuild=true`, { method: "POST" });
+      app.innerHTML = "";
+      renderRefusalForm(app, act, updated);
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.textContent = "Подтвердить и сформировать документ";
+  confirmBtn.onclick = async () => {
+    if (!confirm("После подтверждения текст изменить нельзя.")) return;
+    err.textContent = "";
+    try {
+      await api(`/api/acts/${act.id}/refusal`, { method: "PUT", json: currentEdit() });
+      const confirmed = await api(`/api/acts/${act.id}/refusal/confirm`, { method: "POST" });
+      app.innerHTML = "";
+      renderRefusalConfirmed(app, confirmed);
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  app.append(saveBtn, rebuildBtn, confirmBtn);
+}
+
+function renderRefusalConfirmed(app, dto) {
+  const p = document.createElement("p");
+  p.textContent = "Документ отправлен вам в чат MAX.";
+  app.appendChild(p);
+  const btn = document.createElement("button");
+  btn.textContent = "Вернуться в чат";
+  btn.onclick = () => { if (WA && WA.close) WA.close(); };
+  app.appendChild(btn);
 }
 
 function renderRemarksSummary(app, act) {

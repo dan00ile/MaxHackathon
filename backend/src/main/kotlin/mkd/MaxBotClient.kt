@@ -139,10 +139,12 @@ class MaxBotClient(private val token: String, private val base: String) {
         }
         val uploadUrl: UploadUrl = uploadUrlResp.body()
 
+        val mime = if (fileName.endsWith(".pdf", ignoreCase = true)) "application/pdf" else "application/octet-stream"
         val uploadResp = http.post(uploadUrl.url) {
             setBody(MultiPartFormDataContent(formData {
                 append("data", bytes, Headers.build {
                     append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
+                    append(HttpHeaders.ContentType, mime)
                 })
             }))
         }
