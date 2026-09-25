@@ -1,16 +1,23 @@
 package mkd
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
+import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.delay
+import kotlinx.io.readByteArray
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.SortOrder
@@ -63,6 +70,11 @@ fun rolesOfTx(userId: Long): Roles {
 
 suspend fun rolesOf(userId: Long): Roles = tx { rolesOfTx(userId) }
 
+// вызывать только внутри tx { }
+fun photosOfTx(remarkId: Long): List<PhotoDto> =
+    Attachments.selectAll().where { Attachments.remarkId eq remarkId }
+        .map { PhotoDto(it[Attachments.id].value, "/api/photos/${it[Attachments.id].value}") }
+
 // последний акт дома в статусе RECEIVED/COLLECTING/REVIEW
 suspend fun activeActIdOf(houseId: Long): Long? = tx {
     Acts.select(Acts.id)
@@ -111,6 +123,7 @@ suspend fun activeActIdOf(houseId: Long): Long? = tx {
     val volume: String = "", val cost: String = "", val workKind: String = "OTHER",
 )
 @Serializable data class CardInput(val number: String?, val formedDate: String?, val period: String?, val items: List<ItemInput>)
+@Serializable data class MyRemarkInput(val verdict: String, val text: String? = null)
 
 private suspend fun actDto(cfg: Config, actId: Long, userId: Long): ActDto = tx {
     val act = Acts.selectAll().where { Acts.id eq actId }.single()
@@ -123,20 +136,18 @@ private suspend fun actDto(cfg: Config, actId: Long, userId: Long): ActDto = tx 
     val items = itemRows.map { row ->
         val itemId = row[ActItems.id].value
         val itemRemarks = Remarks.selectAll().where { Remarks.itemId eq itemId }.toList()
-        fun photosOf(remarkId: Long) = Attachments.selectAll().where { Attachments.remarkId eq remarkId }
-            .map { PhotoDto(it[Attachments.id].value, "/api/photos/${it[Attachments.id].value}") }
         val ok = itemRemarks.count { it[Remarks.verdict] == Verdict.OK }
         val issue = itemRemarks.count { it[Remarks.verdict] == Verdict.ISSUE }
-        val issueWithPhoto = itemRemarks.count { it[Remarks.verdict] == Verdict.ISSUE && photosOf(it[Remarks.id].value).isNotEmpty() }
+        val issueWithPhoto = itemRemarks.count { it[Remarks.verdict] == Verdict.ISSUE && photosOfTx(it[Remarks.id].value).isNotEmpty() }
         val my = if (roles.resident) {
             itemRemarks.firstOrNull { it[Remarks.authorId] == userId }
-                ?.let { MyRemarkDto(it[Remarks.verdict].name, it[Remarks.originalText], photosOf(it[Remarks.id].value)) }
+                ?.let { MyRemarkDto(it[Remarks.verdict].name, it[Remarks.originalText], photosOfTx(it[Remarks.id].value)) }
         } else null
         val remarksDto = if (roles.chairman) {
             itemRemarks.map {
                 RemarkDto(
                     it[Remarks.id].value, it[Remarks.verdict].name, it[Remarks.originalText], it[Remarks.formalizedText],
-                    it[Remarks.llmStatus].name, photosOf(it[Remarks.id].value),
+                    it[Remarks.llmStatus].name, photosOfTx(it[Remarks.id].value),
                 )
             }
         } else null
@@ -159,7 +170,7 @@ private suspend fun actDto(cfg: Config, actId: Long, userId: Long): ActDto = tx 
     )
 }
 
-fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService) {
+fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService) {
     get("/api/acts/{id}") {
         val auth = call.authUser(cfg)
         val actId = call.parameters["id"]!!.toLong()
@@ -243,6 +254,44 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService) {
             delay(50)
         }
         call.respond(actDto(cfg, actId, auth.userId))
+    }
+
+    put("/api/items/{itemId}/my-remark") {
+        val auth = call.authUser(cfg)
+        val itemId = call.parameters["itemId"]!!.toLong()
+        val input = call.receive<MyRemarkInput>()
+        val verdict = runCatching { Verdict.valueOf(input.verdict) }.getOrElse {
+            throw ApiError(HttpStatusCode.BadRequest, "invalid_verdict", "verdict должен быть OK или ISSUE")
+        }
+        call.respond(remarks.saveMy(itemId, auth.userId, verdict, input.text))
+    }
+
+    post("/api/items/{itemId}/my-remark/photos") {
+        val auth = call.authUser(cfg)
+        val itemId = call.parameters["itemId"]!!.toLong()
+        var bytes: ByteArray? = null
+        var mime: String? = null
+        call.receiveMultipart(formFieldLimit = 10L * 1024 * 1024).forEachPart { part ->
+            if (part is PartData.FileItem && part.name == "photo") {
+                mime = part.contentType?.toString()
+                bytes = part.provider().readRemaining().readByteArray()
+            }
+            part.dispose()
+        }
+        val data = bytes ?: throw ApiError(HttpStatusCode.BadRequest, "no_photo", "Файл не передан")
+        val mimeType = mime ?: ""
+        if (mimeType !in setOf("image/jpeg", "image/png")) {
+            throw ApiError(HttpStatusCode.BadRequest, "invalid_mime", "Допустимы только JPEG и PNG")
+        }
+        if (data.size > 10 * 1024 * 1024) throw ApiError(HttpStatusCode.BadRequest, "too_large", "Файл больше 10 МБ")
+        call.respond(remarks.addPhoto(itemId, auth.userId, data, mimeType))
+    }
+
+    get("/api/photos/{id}") {
+        val auth = call.authUser(cfg)
+        val photoId = call.parameters["id"]!!.toLong()
+        val (file, mime) = remarks.photoFile(photoId, auth.userId)
+        call.respondBytes(file.readBytes(), ContentType.parse(mime))
     }
 
     get("/api/me") {

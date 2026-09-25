@@ -3,14 +3,45 @@ const params = new URLSearchParams(location.search);
 const DEV_USER = params.get("devUser");          // локальная отладка вне MAX (нужен DEV_AUTH=true на бэкенде)
 const DEV_START = params.get("startapp");         // локальная отладка стартового параметра, напр. ?startapp=act_1
 
-async function api(path, opts = {}) {
-  const headers = { ...(opts.headers || {}) };
+function authHeaders() {
+  const headers = {};
   if (WA && WA.initData) headers["X-Max-Init-Data"] = WA.initData;
   else if (DEV_USER) headers["X-Dev-User-Id"] = DEV_USER;
+  return headers;
+}
+
+async function api(path, opts = {}) {
+  const headers = { ...authHeaders(), ...(opts.headers || {}) };
   if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
   const r = await fetch(window.API_BASE + path, { ...opts, headers });
   if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
   return r.status === 204 ? null : r.json();
+}
+
+// сервер требует X-Max-Init-Data/X-Dev-User-Id даже на статичные картинки — обычный <img src> их не передаст
+async function loadImage(url, imgEl) {
+  try {
+    const r = await fetch(window.API_BASE + url, { headers: authHeaders() });
+    if (!r.ok) return;
+    imgEl.src = URL.createObjectURL(await r.blob());
+  } catch (e) { /* миниатюра просто не загрузится */ }
+}
+
+// уменьшаем фото на клиенте перед загрузкой: длинная сторона ≤1600px, JPEG q=0.8
+async function resizeImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const maxSide = 1600;
+  let { width, height } = bitmap;
+  if (width > maxSide || height > maxSide) {
+    const scale = maxSide / Math.max(width, height);
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
 }
 
 const STATUS_RU = {
@@ -90,7 +121,153 @@ function render() {
     else app.textContent = "Председатель ещё готовит акт к проверке.";
     return;
   }
+  if (act.isResident) { renderChecklist(app, act); return; }
   app.textContent = "Статус: " + statusRu;
+}
+
+function renderChecklist(app, act) {
+  const editable = act.status === "COLLECTING";
+  if (!editable) {
+    const note = document.createElement("p");
+    note.textContent = "Сбор замечаний закрыт.";
+    app.appendChild(note);
+  }
+  act.items.forEach((item) => app.appendChild(renderChecklistItem(item, editable)));
+}
+
+function renderChecklistItem(item, editable) {
+  const card = document.createElement("div");
+  card.className = "item-card";
+
+  const title = document.createElement("div");
+  title.className = "item-title";
+  title.textContent = `№${item.lineNo} ${item.name}` + (item.periodicity ? ` — ${item.periodicity}` : "");
+  card.appendChild(title);
+
+  const agg = document.createElement("div");
+  agg.className = "item-agg";
+  const total = item.stats.ok + item.stats.issue;
+  agg.textContent = total > 0 ? `${item.stats.issue} из ${total} ответивших: есть претензия` : "Пока никто не отметил";
+  card.appendChild(agg);
+
+  const my = item.my || { verdict: null, text: null, photos: [] };
+  let photos = my.photos || [];
+
+  const btnRow = document.createElement("div");
+  const okBtn = document.createElement("button");
+  okBtn.textContent = "Выполнено";
+  const issueBtn = document.createElement("button");
+  issueBtn.textContent = "Есть претензия";
+  btnRow.append(okBtn, issueBtn);
+  card.appendChild(btnRow);
+
+  const err = document.createElement("div");
+  err.className = "error";
+  card.appendChild(err);
+
+  const issueBox = document.createElement("div");
+
+  const textarea = document.createElement("textarea");
+  textarea.placeholder = "Что именно не так? Например: в подъезде 2 не мыли пол с 10 сентября";
+  textarea.value = my.text || "";
+  issueBox.appendChild(textarea);
+
+  const photosDiv = document.createElement("div");
+  photosDiv.className = "photos";
+  function renderPhotos() {
+    photosDiv.innerHTML = "";
+    photos.forEach((p) => {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      loadImage(p.url, img);
+      photosDiv.appendChild(img);
+    });
+  }
+  renderPhotos();
+  issueBox.appendChild(photosDiv);
+
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  fileInput.capture = "environment";
+  fileInput.style.display = "none";
+  const addPhotoBtn = document.createElement("button");
+  addPhotoBtn.textContent = "Добавить фото";
+  addPhotoBtn.onclick = () => fileInput.click();
+  issueBox.append(addPhotoBtn, fileInput);
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "Претензия с фото — самый сильный аргумент для отказа. Без фото председатель не сможет её заявить.";
+  issueBox.appendChild(hint);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Сохранить";
+  issueBox.appendChild(saveBtn);
+
+  card.appendChild(issueBox);
+
+  function setVerdict(v) {
+    okBtn.classList.toggle("active", v === "OK");
+    issueBtn.classList.toggle("active", v === "ISSUE");
+    issueBox.style.display = v === "ISSUE" ? "block" : "none";
+  }
+  setVerdict(my.verdict);
+
+  if (!editable) {
+    okBtn.disabled = true;
+    issueBtn.disabled = true;
+    textarea.disabled = true;
+    addPhotoBtn.style.display = "none";
+    saveBtn.style.display = "none";
+    return card;
+  }
+
+  function applyRemark(dto) {
+    my.verdict = dto.verdict;
+    my.text = dto.text;
+    photos = dto.photos;
+    textarea.value = dto.text || "";
+    setVerdict(dto.verdict);
+    renderPhotos();
+  }
+
+  okBtn.onclick = async () => {
+    err.textContent = "";
+    try { applyRemark(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "OK" } })); }
+    catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  issueBtn.onclick = () => setVerdict("ISSUE");
+
+  async function saveText() {
+    applyRemark(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "ISSUE", text: textarea.value } }));
+  }
+
+  saveBtn.onclick = async () => {
+    err.textContent = "";
+    try { await saveText(); }
+    catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    err.textContent = "";
+    try {
+      await saveText(); // фото можно добавить только к уже сохранённому замечанию
+      const blob = await resizeImage(file);
+      const form = new FormData();
+      form.append("photo", blob, "photo.jpg");
+      const r = await fetch(window.API_BASE + `/api/items/${item.id}/my-remark/photos`, { method: "POST", headers: authHeaders(), body: form });
+      if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
+      photos = [...photos, await r.json()];
+      renderPhotos();
+    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  };
+
+  return card;
 }
 
 function field(label, value) {

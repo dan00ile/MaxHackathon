@@ -40,6 +40,7 @@ fun main() {
     val gigaChat = GigaChatClient(cfg.gigaAuthKey, cfg.gigaScope, cfg.gigaModel)
     val timers = TimerService(cfg, max)
     val acts = ActService(cfg, max, gigaChat, timers)
+    val remarks = RemarkService(cfg, acts)
     scope.launch { timers.loop() }
 
     var bot: Bot? = null
@@ -100,7 +101,7 @@ fun main() {
                     bot?.let { b -> scope.launch { runCatching { b.handle(update) }.onFailure { log.error("update", it) } } }
                 }
             }
-            api(cfg, max, acts)
+            api(cfg, max, acts, remarks)
         }
     }.start(wait = true)
 }
