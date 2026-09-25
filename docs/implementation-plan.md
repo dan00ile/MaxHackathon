@@ -1845,6 +1845,11 @@ README — ровно разделы из hackathon-brief §«Формат сд�
    или именованный туннель Cloudflare. Адрес вписать в `webapp/config.js`
    (`API_BASE`) и в `.env` (`CORS_ORIGIN=https://<user>.github.io`). Нужен
    к S6-смоуку и к сдаче.
+   Готовый вариант — `deploy/setup.sh` (Ubuntu 22.04/24.04): одной командой
+   ставит Docker, поднимает compose, HTTPS через Caddy на `<ip>.sslip.io` и
+   systemd-таймер, который раз в 2 минуты подтягивает `master` и
+   пересобирает контейнеры. Следствие: всё, что смержено в `master`, само
+   уезжает на сервер — мержить только проверенное.
 5. **Ключ GigaChat (`GIGACHAT_AUTH_KEY`, `GIGACHAT_SCOPE`).**
    developers.sber.ru → проект GigaChat API → «Ключ авторизации»
    (Authorization key, base64). Для физлица scope `GIGACHAT_API_PERS`.
