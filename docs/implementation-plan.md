@@ -285,6 +285,7 @@ data class Config(
 | `TZ_ZONE` | `Europe/Moscow` |
 | `PUBLIC_URL` | `""` — публичный HTTPS-адрес бэкенда без `/` на конце; задан → webhook, пуст → polling (S4b) |
 | `WEBHOOK_SECRET` | `""` — случайная строка `[A-Za-z0-9]`, ≥32 символа; обязателен, если задан `PUBLIC_URL` |
+| `DEV_MAX_USER_ID` | `""` — только для `dev/update.sh` (от чьего имени слать тестовые события); бэкенд не читает |
 
 `Application.kt` на этом шаге: `fun main()` → `Config.fromEnv()` →
 `embeddedServer(Netty, port = cfg.port) { install(ContentNegotiation) { json(AppJson) }; install(CallLogging); routing { get("/health") { call.respondText("ok") } } }.start(wait = true)`.
@@ -692,7 +693,7 @@ class Bot(private val max: MaxBotClient /* + сервисы в следующи�
 > `Bot.handle` не меняется — меняется только способ доставки событий.
 
 **Файлы:** `Config.kt`, `MaxBotClient.kt`, `Bot.kt`, `Application.kt`,
-`.env.example`.
+`.env.example`, `dev/update.sh`.
 
 Контракт MAX:
 - `GET /subscriptions` → `{"subscriptions":[{"url":"…", …}]}`.
@@ -732,10 +733,44 @@ POST /webhook/max/{secret}
   `unsubscribe` (старые адреса, напр. после смены IP); если `hook` ещё нет
   — `subscribe(hook)`. `pollLoop` **не** запускать. В лог — адрес без
   секрета: `"webhook: ${cfg.publicUrl}/webhook/max/***"`.
-- `cfg.publicUrl` пуст → **polling-режим** как в S4. Перед `pollLoop`
-  вызвать `subscriptions()`: если список не пуст — лог WARN «На этом токене
-  висит webhook (сервер?) — polling не получит событий. Для разработки
-  используйте отдельный тестовый бот» и **не** удалять чужую подписку.
+- `cfg.publicUrl` пуст → **локальный режим**. Вызвать `subscriptions()`:
+  - список пуст → `pollLoop` как в S4;
+  - список не пуст (webhook держит сервер) → `pollLoop` **не** запускать,
+    чужую подписку **не** удалять, лог INFO «Webhook держит сервер — события
+    MAX сюда не придут; подавайте их curl'ом на /webhook/max/{secret}».
+- Роут `/webhook/max/{secret}` регистрируется в **обоих** режимах, если
+  `cfg.webhookSecret` не пуст.
+
+#### Разработка с одним токеном бота
+
+Второго бота нет, поэтому события из MAX получает только сервер. Исходящие
+вызовы (`sendText`, `sendFile`, `answerCallback`) работают с тем же токеном
+откуда угодно. Порядок для исполнителя:
+1. Локально: `PUBLIC_URL` пуст, `WEBHOOK_SECRET=local-dev-secret-0000000000000000`,
+   `DEV_AUTH=true`, `DEV_MAX_USER_ID=<user_id человека>` (узнать у человека
+   или из `/api/me` на сервере; это не секрет).
+2. Входящие события — скриптом `dev/update.sh` (создать в этом шаге):
+   ```bash
+   #!/usr/bin/env bash
+   # dev/update.sh text "/start" | dev/update.sh callback "status" | dev/update.sh file <url> <name>
+   # Шлёт в локальный бэкенд событие MAX от лица DEV_MAX_USER_ID.
+   ```
+   Скрипт собирает JSON `Update` (`message_created` с `body.text`;
+   `message_callback` с `callback.payload` и `callback_id=dev-<время>`;
+   `message_created` с `attachments=[{"type":"file","payload":{"url":…},"filename":…}]`)
+   и делает `curl -X POST localhost:8080/webhook/max/$WEBHOOK_SECRET`.
+   Ответ бота приходит человеку в MAX по-настоящему.
+3. `answerCallback` на `dev-*` callback_id вернёт ошибку от MAX — это
+   ожидаемо, ловить и логировать, не падать.
+4. Мини-апп — локально через `?devUser=<id>` (S6), не через MAX.
+5. Живая проверка в MAX (кнопки, мини-апп из чата) — делает **человек** на
+   сервере после мержа (автообновление ~2 мин). В PR каждого шага писать
+   короткий сценарий «что нажать в MAX и что должно произойти».
+
+Во всех «Критериях готовности» ниже фраза «в MAX сделать X» для
+исполнителя означает: подать событие через `dev/update.sh` и убедиться,
+что человеку пришёл ожидаемый ответ; нажатия кнопок и мини-апп внутри
+MAX — в сценарий для человека.
 
 **Критерий готовности:**
 1. Локально без `PUBLIC_URL` — поведение S4 (эхо через polling) не
@@ -744,9 +779,13 @@ POST /webhook/max/{secret}
 3. `curl -X POST localhost:8080/webhook/max/$WEBHOOK_SECRET -H 'Content-Type: application/json' -d '{"update_type":"message_created","timestamp":1,"message":{"sender":{"user_id":1},"recipient":{"user_id":1},"timestamp":1,"body":{"mid":"m1","text":"hi"}}}'`
    → 200 сразу (отправка эха упадёт на несуществующем user_id — это
    нормально, ошибка только в логе).
-4. На сервере (после мержа `deploy/setup.sh` сам выставит `PUBLIC_URL` и
-   `WEBHOOK_SECRET`): в логе `webhook: https://…/webhook/max/***`,
-   сообщение боту в MAX возвращается эхом **без** `pollLoop`.
+4. Локально без `PUBLIC_URL`, когда webhook держит сервер: `pollLoop`
+   не стартует, `dev/update.sh text привет` → человеку в MAX пришло
+   «Эхо: привет».
+5. Сценарий для человека (в PR): после мержа и автообновления написать
+   боту — ответ «Эхо: …»; в логе сервера
+   (`docker compose -f /opt/maxhackathon/compose.yaml logs backend`)
+   строка `webhook: https://…/webhook/max/***`.
 
 **Коммит:** `feat(bot): приём событий MAX через webhook`
 
