@@ -44,7 +44,7 @@ fun main() {
         }
         botUsername = me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
         log.info("MAX bot me(): {}, botUsername={}", me, botUsername)
-        val botInstance = Bot(max)
+        val botInstance = Bot(cfg, max)
         bot = botInstance
 
         if (cfg.publicUrl.isNotBlank()) {

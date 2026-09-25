@@ -51,6 +51,15 @@ fun rolesOfTx(userId: Long): Roles {
 
 suspend fun rolesOf(userId: Long): Roles = tx { rolesOfTx(userId) }
 
+// последний акт дома в статусе RECEIVED/COLLECTING/REVIEW
+suspend fun activeActIdOf(houseId: Long): Long? = tx {
+    Acts.select(Acts.id)
+        .where { (Acts.houseId eq houseId) and (Acts.status inList listOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)) }
+        .orderBy(Acts.createdAt to SortOrder.DESC)
+        .limit(1)
+        .singleOrNull()?.get(Acts.id)?.value
+}
+
 @Serializable data class MeDto(
     val userId: Long, val name: String,
     val registered: Boolean,
