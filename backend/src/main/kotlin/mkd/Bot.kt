@@ -323,6 +323,11 @@ class Bot(
     }
 
     private suspend fun handleSignPrompt(userId: Long, actId: Long) {
+        val act = try { acts.requireChairmanOf(actId, userId) } catch (e: ApiError) { max.sendText(userId, e.message); return }
+        if (act[Acts.status] != ActStatus.COLLECTING && act[Acts.status] != ActStatus.REVIEW) {
+            max.sendText(userId, "Акт уже подписан, направлен отказ или принят молчаливым согласием")
+            return
+        }
         val disputed = tx { ActItems.selectAll().where { (ActItems.actId eq actId) and (ActItems.decision eq Decision.DISPUTE) }.count() }
         var text = "Подписать акт без возражений? Оспариваемых позиций: $disputed."
         if (disputed > 0) text += "\nЗамечания жителей в документ не попадут."
