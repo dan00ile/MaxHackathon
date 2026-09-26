@@ -104,6 +104,23 @@ class ActVisibilityTest {
         assertEquals(activeId, currentActId())
     }
 
+    // ровно случай из чата: по первому акту направлен отказ, председатель загрузил следующий
+    @Test
+    fun `new act after a refusal becomes the visible one`() {
+        insertAct(ActStatus.REJECTED, daysAgo = 35)
+        val newId = insertAct(ActStatus.COLLECTING, daysAgo = 2)
+
+        assertEquals(newId, currentActId())
+    }
+
+    @Test
+    fun `newest finished act wins when nothing is active`() {
+        insertAct(ActStatus.REJECTED, daysAgo = 70)
+        val lastId = insertAct(ActStatus.SIGNED, daysAgo = 35)
+
+        assertEquals(lastId, currentActId())
+    }
+
     @Test
     fun `archived act is invisible`() {
         insertAct(ActStatus.SIGNED, daysAgo = 5, archived = true)
