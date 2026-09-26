@@ -228,6 +228,21 @@ class ResetTest {
         }
     }
 
+    // на уже поднятом стенде таблица acts создана без archived_at: проверяем, что Db.init
+    // доливает колонку, а не падает и не требует ручного ALTER
+    @Test
+    fun `migration adds archived_at to a table created before the change`() {
+        transaction(testDb) { exec("ALTER TABLE acts DROP COLUMN archived_at") }
+
+        transaction(testDb) { SchemaUtils.createMissingTablesAndColumns(*allTables) }
+
+        transaction(testDb) {
+            val act = Acts.selectAll().where { Acts.id eq actId }.single()
+            assertNull(act[Acts.archivedAt], "колонка добавлена и пуста для старых актов")
+            assertNotNull(activeActTx(houseId), "выборка активного акта работает после миграции")
+        }
+    }
+
     @Test
     fun `overdue act without reset still slides into silent consent`() {
         makeActOverdue()
