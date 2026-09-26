@@ -370,6 +370,14 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
         call.respond(actDto(cfg, actId, auth.userId))
     }
 
+    // та же подпись, что по кнопке в чате: PDF уходит председателю в чат, жители получают уведомление
+    post("/api/acts/{id}/sign") {
+        val auth = call.authUser(cfg)
+        val actId = call.parameters["id"]!!.toLong()
+        acts.sign(actId, auth.userId)
+        call.respond(actDto(cfg, actId, auth.userId))
+    }
+
     put("/api/items/{itemId}/decision") {
         val auth = call.authUser(cfg)
         val itemId = call.parameters["itemId"]!!.toLong()

@@ -137,6 +137,99 @@ function toast(text) {
   t.hideTimer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
+// Шторка снизу вместо системного confirm(): свой заголовок, пояснение и сколько угодно вариантов.
+// Резолвится значением нажатого варианта; тап мимо или Esc — null
+function sheet(title, text, actions) {
+  return new Promise((resolve) => {
+    const overlay = el("div", "overlay");
+    const box = el("div", "sheet");
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.appendChild(el("h3", "", title));
+    if (text) box.appendChild(el("p", "", text));
+    const onKey = (e) => { if (e.key === "Escape") close(null); };
+    function close(value) {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      resolve(value);
+    }
+    actions.forEach(([label, cls, value]) => box.appendChild(button(label, "btn " + cls, () => close(value))));
+    overlay.onclick = (e) => { if (e.target === overlay) close(null); };
+    document.addEventListener("keydown", onKey);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    box.querySelector("button").focus({ preventScroll: true });
+  });
+}
+
+function ask(title, text, okLabel, okClass = "btn-primary") {
+  return sheet(title, text, [[okLabel, okClass, true], ["Отмена", "btn-plain", false]]);
+}
+
+// Просмотр фото на весь экран: листание стрелками, свайпом и клавишами, закрытие — крестик, тап по фону, Esc
+function openViewer(photos, index) {
+  const overlay = el("div", "viewer");
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Просмотр фото");
+  const img = el("img", "viewer-img");
+  img.alt = "Фото к замечанию";
+  const count = el("div", "viewer-count");
+  const closeBtn = iconButton("cross", "", "viewer-btn viewer-close");
+  closeBtn.setAttribute("aria-label", "Закрыть");
+  overlay.append(img, count, closeBtn);
+
+  function show(i) {
+    index = (i + photos.length) % photos.length;
+    img.removeAttribute("src");
+    loadImage(photos[index].url, img);
+    count.textContent = photos.length > 1 ? `${index + 1} из ${photos.length}` : "";
+  }
+  if (photos.length > 1) {
+    const prev = iconButton("back", "", "viewer-btn viewer-prev");
+    const next = iconButton("chevron", "", "viewer-btn viewer-next");
+    prev.setAttribute("aria-label", "Предыдущее фото");
+    next.setAttribute("aria-label", "Следующее фото");
+    prev.onclick = () => show(index - 1);
+    next.onclick = () => show(index + 1);
+    overlay.append(prev, next);
+    let x0 = null;
+    overlay.addEventListener("pointerdown", (e) => { x0 = e.clientX; });
+    overlay.addEventListener("pointerup", (e) => {
+      if (x0 !== null && Math.abs(e.clientX - x0) > 50) show(index + (e.clientX < x0 ? 1 : -1));
+      x0 = null;
+    });
+  }
+  const onKey = (e) => {
+    if (e.key === "Escape") close();
+    else if (e.key === "ArrowLeft" && photos.length > 1) show(index - 1);
+    else if (e.key === "ArrowRight" && photos.length > 1) show(index + 1);
+  };
+  function close() {
+    document.removeEventListener("keydown", onKey);
+    overlay.remove();
+  }
+  closeBtn.onclick = close;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(overlay);
+  show(index);
+  closeBtn.focus({ preventScroll: true });
+}
+
+// миниатюра, которая открывает просмотр всей серии фото с этого места
+function photoThumb(photos, index, alt) {
+  const b = el("button", "thumb-btn");
+  b.type = "button";
+  b.setAttribute("aria-label", `${alt}: открыть на весь экран`);
+  const img = el("img", "thumb");
+  img.alt = alt;
+  loadImage(photos[index].url, img);
+  b.appendChild(img);
+  b.onclick = () => openViewer(photos, index);
+  return b;
+}
+
 // шапка позиции: номер-бейдж + название + чипы
 function itemHead(lineNo, name, chips) {
   const head = el("div", "item-head");
@@ -221,7 +314,7 @@ async function start() {
   else if (sp.startsWith("refusal_")) await openAct(Number(sp.slice(8)), "refusal");
   else await showList();
 
-  if (WA && WA.BackButton) WA.BackButton.onClick(showList);
+  if (WA && WA.BackButton) WA.BackButton.onClick(goToList);
   setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 }
@@ -241,7 +334,14 @@ async function openAct(id, tab = "checklist") {
   window.scrollTo(0, 0);
 }
 
+// выход из акта в список — через защиту от потери несохранённых правок (редактор карточки)
+async function goToList() {
+  if (state.leaveGuard && !(await state.leaveGuard())) return;
+  await showList();
+}
+
 async function showList(notice) {
+  state.leaveGuard = null;
   if (WA && WA.BackButton) WA.BackButton.hide();
   state.view = "list";
   state.act = null;
@@ -305,10 +405,10 @@ function formatDate(iso) {
 function renderHeader(act) {
   const inner = heroShell();
   const back = iconButton("back", "Все акты", "hero-back");
-  back.onclick = () => busy(back, showList);
+  back.onclick = () => busy(back, goToList);
   inner.append(back, eyebrow(act.houseAddress));
 
-  inner.appendChild(el("h1", "app-title", `Акт № ${act.number || "без номера"} за ${act.period || "—"}`));
+  inner.appendChild(el("h1", "app-title", act.recognition === "PENDING" ? "Новый акт" : `Акт № ${act.number || "без номера"} за ${act.period || "—"}`));
   inner.appendChild(el("span", `status-pill status-${act.status}`, STATUS_RU[act.status] || act.status));
 
   if (["RECEIVED", "COLLECTING", "REVIEW"].includes(act.status)) {
@@ -453,6 +553,7 @@ function render() {
   const app = document.getElementById("app");
   const act = state.act;
   live = [];
+  state.leaveGuard = null;
   renderHeader(act);
   app.innerHTML = "";
 
@@ -509,7 +610,7 @@ function renderChairmanTabs(app, act) {
     updateCount();
     body.innerHTML = "";
     if (state.tab === "checklist") renderChecklist(body, act);
-    else if (state.tab === "remarks") renderRemarksSummary(body, act);
+    else if (state.tab === "remarks") renderRemarksSummary(body, act, (key) => { state.tab = key; renderBody(); window.scrollTo(0, 0); });
     else renderRefusalTab(body, act);
   }
   renderBody();
@@ -596,8 +697,8 @@ function renderRefusalForm(app, act, dto) {
   });
 
   const rebuildBtn = button("Пересобрать", "btn btn-dashed");
-  rebuildBtn.onclick = () => {
-    if (!confirm("Ваши правки будут потеряны.")) return;
+  rebuildBtn.onclick = async () => {
+    if (!await ask("Пересобрать черновик?", "Черновик соберётся заново из решений и замечаний — ваши правки текста будут потеряны.", "Пересобрать", "btn-negative")) return;
     busy(rebuildBtn, async () => {
       err.textContent = "";
       try { rerender(await api(`/api/acts/${act.id}/refusal/draft?rebuild=true`, { method: "POST" }), "Черновик пересобран"); }
@@ -606,8 +707,8 @@ function renderRefusalForm(app, act, dto) {
   };
 
   const confirmBtn = button("Подтвердить и сформировать PDF", "btn btn-primary");
-  confirmBtn.onclick = () => {
-    if (!confirm("После подтверждения текст изменить нельзя.")) return;
+  confirmBtn.onclick = async () => {
+    if (!await ask("Подтвердить отказ?", "Сформируем PDF и отправим вам в чат. После подтверждения текст изменить нельзя.", "Подтвердить")) return;
     busy(confirmBtn, async () => {
       err.textContent = "";
       try {
@@ -630,37 +731,98 @@ function renderRefusalConfirmed(app) {
     "PDF отправлен вам в чат MAX. Перешлите его в УК и нажмите в чате «Отправил исполнителю».", backToChatButton()));
 }
 
-function renderRemarksSummary(app, act) {
+function renderRemarksSummary(app, act, goTab) {
   const err = el("div", "error");
-  app.appendChild(err);
+  app.append(decisionSummary(act), err);
 
   const items = [...act.items].sort((a, b) => b.stats.issue - a.stats.issue);
   items.forEach((item) => app.appendChild(liveRemarksItem(item, err)));
 
-  if (act.status === "COLLECTING") {
-    const closeBtn = button("Завершить сбор замечаний", "btn btn-primary");
-    closeBtn.onclick = () => {
-      if (!confirm("После завершения сбора жители больше не смогут отмечать позиции.")) return;
-      busy(closeBtn, async () => {
-        err.textContent = "";
-        try { state.act = await api(`/api/acts/${act.id}/close-collection`, { method: "POST" }); render(); }
-        catch (e) { showError(err, e); }
-      });
-    };
-    app.appendChild(actionBar(closeBtn));
+  // главное действие зависит от решений: есть оспоренные — к отказу, нет — подписывать
+  const bar = actionBar();
+  app.appendChild(bar);
+  function updateBar() {
+    const disputed = act.items.filter((i) => i.decision === "DISPUTE").length;
+    const signBtn = button(act.status === "COLLECTING" ? "Подписать без возражений" : "Подписать акт",
+      disputed || act.status === "COLLECTING" ? "btn btn-secondary" : "btn btn-primary");
+    signBtn.onclick = () => signAct(act, signBtn, err);
+    if (act.status === "COLLECTING") {
+      const closeBtn = button("Завершить сбор замечаний", "btn btn-primary");
+      closeBtn.onclick = async () => {
+        if (!await ask("Завершить сбор замечаний?", "Жители больше не смогут отмечать позиции. Дальше — решение по каждой позиции.", "Завершить сбор")) return;
+        busy(closeBtn, async () => {
+          err.textContent = "";
+          try { state.act = await api(`/api/acts/${act.id}/close-collection`, { method: "POST" }); render(); }
+          catch (e) { showError(err, e); }
+        });
+      };
+      bar.replaceChildren(closeBtn, signBtn);
+    } else if (disputed) {
+      bar.replaceChildren(button("Перейти к мотивированному отказу", "btn btn-primary", () => goTab("refusal")), signBtn);
+    } else {
+      bar.replaceChildren(signBtn);
+    }
   }
+  updateBar();
+  live.push(updateBar);
 }
 
-// карточка замечаний пересобирается целиком, когда у позиции появились новые отметки/формулировки LLM
+// сводка решений председателя и подсказка, что делать дальше
+function decisionSummary(act) {
+  const card = el("div", "summary-card");
+  const stats = el("div", "summary-stats");
+  const hint = el("p", "summary-hint");
+  card.append(stats, hint);
+  function stat(n, label, mod) {
+    const s = el("div", "summary-stat summary-stat--" + mod);
+    s.append(el("b", "", String(n)), el("span", "", label));
+    return s;
+  }
+  function update() {
+    const count = (d) => act.items.filter((i) => i.decision === d).length;
+    const disputed = count("DISPUTE"), accepted = count("ACCEPT"), pending = act.items.length - disputed - accepted;
+    stats.replaceChildren(stat(disputed, "оспорено", "issue"), stat(accepted, "принято", "ok"), stat(pending, "без решения", "pending"));
+    let text;
+    if (pending) text = `Примите или оспорьте ${pending} ${plural(pending, "позицию", "позиции", "позиций")}: оспорить можно только позицию с фото.`;
+    else if (disputed) text = `Оспорено ${disputed} ${plural(disputed, "позиция", "позиции", "позиций")} — сформируйте мотивированный отказ или подпишите акт без возражений.`;
+    else text = "Все позиции приняты — акт можно подписывать.";
+    if (act.status === "COLLECTING") text = "Сбор ещё идёт — жители могут добавлять отметки. " + text;
+    hint.textContent = text;
+  }
+  update();
+  live.push(update);
+  return card;
+}
+
+async function signAct(act, btn, err) {
+  const disputed = act.items.filter((i) => i.decision === "DISPUTE").length;
+  const text = (act.status === "COLLECTING" ? "Сбор замечаний будет завершён. " : "") +
+    (disputed ? `Оспорено позиций: ${disputed} — эти замечания в документ не попадут. ` : "") +
+    "Подписанный PDF придёт вам в чат — перешлите его в УК.";
+  if (!await ask("Подписать акт без возражений?", text, "Подписать")) return;
+  busy(btn, async () => {
+    err.textContent = "";
+    try {
+      state.act = await api(`/api/acts/${act.id}/sign`, { method: "POST" });
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      toast("Акт подписан — PDF в чате");
+    } catch (e) { showError(err, e); }
+  });
+}
+
+// карточка замечаний пересобирается целиком, когда у позиции появились новые отметки/формулировки LLM.
+// Своё решение председателя перерисовки не вызывает — кнопки уже обновлены на месте
 function liveRemarksItem(item, err) {
   const sig = () => JSON.stringify([item.stats, item.remarks, item.decision]);
-  let card = renderRemarksItem(item, err);
+  const onDecided = () => { last = sig(); syncLive(); };
+  let card = renderRemarksItem(item, err, onDecided);
   let last = sig();
   live.push(() => {
     const s = sig();
     if (s === last) return;
     last = s;
-    const next = renderRemarksItem(item, err);
+    const next = renderRemarksItem(item, err, onDecided);
     next.classList.add("item-card--fresh");
     card.replaceWith(next);
     card = next;
@@ -668,7 +830,7 @@ function liveRemarksItem(item, err) {
   return card;
 }
 
-function renderRemarksItem(item, err) {
+function renderRemarksItem(item, err, onDecided) {
   const card = el("div", "item-card");
 
   card.appendChild(itemHead(item.lineNo, item.name, [item.periodicity && [item.periodicity]]));
@@ -684,12 +846,7 @@ function renderRemarksItem(item, err) {
     }
     box.appendChild(text);
     const photosDiv = el("div", "photos photos--inset");
-    (r.photos || []).forEach((p) => {
-      const img = el("img", "thumb");
-      img.alt = "Фото к замечанию";
-      loadImage(p.url, img);
-      photosDiv.appendChild(img);
-    });
+    (r.photos || []).forEach((p, i) => photosDiv.appendChild(photoThumb(r.photos, i, "Фото к замечанию")));
     box.appendChild(photosDiv);
     card.appendChild(box);
   });
@@ -723,8 +880,10 @@ function renderRemarksItem(item, err) {
     if (item.decision === decision) return;
     busy(btn, async () => {
       err.textContent = "";
-      try { Object.assign(item, await api(`/api/items/${item.id}/decision`, { method: "PUT", json: { decision } })); }
-      catch (e) { showError(err, e); }
+      try {
+        Object.assign(item, await api(`/api/items/${item.id}/decision`, { method: "PUT", json: { decision } }));
+        onDecided();
+      } catch (e) { showError(err, e); }
     }).then(paint);
   }
   acceptBtn.onclick = () => setDecision(acceptBtn, "ACCEPT");
@@ -864,12 +1023,7 @@ function renderChecklistItem(item, editable) {
     wrap.append(head, el("p", "saved-text", item.my.text || ""));
 
     const grid = el("div", "photos");
-    photos.forEach((p) => {
-      const img = el("img", "thumb");
-      img.alt = "Ваше фото";
-      loadImage(p.url, img);
-      grid.appendChild(img);
-    });
+    photos.forEach((p, i) => grid.appendChild(photoThumb(photos, i, "Ваше фото")));
     if (editable && photos.length < 5) grid.appendChild(photoAddTile());
     wrap.appendChild(grid);
 
@@ -917,10 +1071,10 @@ function renderChecklistItem(item, editable) {
     return card;
   }
 
-  okBtn.onclick = () => {
+  okBtn.onclick = async () => {
     if (saved() === "OK") { mode = "OK"; draft = null; paint(); return; }
     const photos = saved() === "ISSUE" ? item.my.photos.length : 0;
-    if (saved() === "ISSUE" && !confirm(photos ? "Замечание и приложенные фото будут удалены." : "Замечание будет удалено.")) return;
+    if (saved() === "ISSUE" && !await ask("Отметить как выполненное?", photos ? "Ваше замечание и приложенные фото будут удалены." : "Ваше замечание будет удалено.", "Да, выполнено")) return;
     busy(okBtn, async () => {
       err.textContent = "";
       try { apply(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "OK" } })); draft = null; }
@@ -959,7 +1113,15 @@ function renderCardEditor(app, act) {
   if (act.recognition === "PENDING") {
     const refreshBtn = button("Обновить", "btn btn-secondary btn-inline");
     refreshBtn.onclick = () => busy(refreshBtn, async () => { state.act = await api(`/api/acts/${act.id}`); render(); });
-    app.appendChild(resultCard("DRAFT", "doc", "Акт распознаётся…", "Обычно это меньше минуты. Страница обновится сама.", refreshBtn));
+    app.appendChild(resultCard("DRAFT", "doc", "Акт распознаётся…", "Читаем реквизиты и позиции — обычно меньше минуты. Страница обновится сама.", refreshBtn));
+    // скелетон будущих позиций: видно, что именно сейчас появится
+    app.appendChild(el("p", "section-title", "Позиции акта"));
+    for (let i = 0; i < 3; i++) {
+      const sk = el("div", "item-card skeleton");
+      sk.setAttribute("aria-hidden", "true");
+      sk.innerHTML = '<div class="sk-head"><span class="sk sk-num"></span><span class="sk sk-line"></span></div><span class="sk sk-line sk-short"></span><div class="sk-row"><span class="sk"></span><span class="sk"></span><span class="sk"></span></div>';
+      app.appendChild(sk);
+    }
     return;
   }
 
@@ -1057,9 +1219,22 @@ function renderCardEditor(app, act) {
     } catch (e) { showError(err, e); }
   });
 
+  // уход из редактора с несохранёнными правками: спрашиваем, а не теряем молча
+  const snapshot = JSON.stringify(cardInput());
+  state.leaveGuard = async () => {
+    if (JSON.stringify(cardInput()) === snapshot) return true;
+    const choice = await sheet("Сохранить изменения?", "В карточке акта есть несохранённые правки.", [
+      ["Сохранить и выйти", "btn-primary", "save"], ["Выйти без сохранения", "btn-secondary", "drop"], ["Остаться", "btn-plain", null],
+    ]);
+    if (choice === "drop") return true;
+    if (choice !== "save") return false;
+    try { await save(); toast("Карточка акта сохранена"); return true; }
+    catch (e) { showError(err, e); return false; }
+  };
+
   const openBtn = button("Открыть сбор замечаний", "btn btn-primary");
-  openBtn.onclick = () => {
-    if (!confirm("После открытия позиции нельзя будет менять.")) return;
+  openBtn.onclick = async () => {
+    if (!await ask("Открыть сбор замечаний?", "Жители получат ссылку, а позиции акта больше нельзя будет менять.", "Открыть сбор")) return;
     busy(openBtn, async () => {
       try {
         await save();
