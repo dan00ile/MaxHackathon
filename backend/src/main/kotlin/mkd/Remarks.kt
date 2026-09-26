@@ -1,22 +1,16 @@
 package mkd
 
-import io.ktor.http.HttpStatusCode
+import io.ktor.http.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.exposed.dao.id.EntityID
-import org.jetbrains.exposed.sql.Op
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.deleteWhere
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.sql.*
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
-import java.util.UUID
+import java.util.*
 
 private const val FORMALIZE_SYSTEM_PROMPT = """
 Ты помогаешь оформить замечание жителя к акту работ управляющей компании.
@@ -45,7 +39,8 @@ class RemarkService(
             if (status != ActStatus.COLLECTING) {
                 throw ApiError(HttpStatusCode.Conflict, "collection_closed", "Сбор замечаний закрыт")
             }
-            val existing = Remarks.selectAll().where { (Remarks.itemId eq itemId) and (Remarks.authorId eq userId) }.singleOrNull()
+            val existing =
+                Remarks.selectAll().where { (Remarks.itemId eq itemId) and (Remarks.authorId eq userId) }.singleOrNull()
             val now = Instant.now()
             val textChanged = existing == null || existing[Remarks.originalText] != trimmedText
             val id: Long = if (existing != null) {
@@ -112,7 +107,8 @@ class RemarkService(
     }
 
     suspend fun ensureFormalized(actId: Long) {
-        val itemIds = tx { ActItems.select(ActItems.id).where { ActItems.actId eq actId }.map { it[ActItems.id].value } }
+        val itemIds =
+            tx { ActItems.select(ActItems.id).where { ActItems.actId eq actId }.map { it[ActItems.id].value } }
         val pending = tx {
             itemIds.flatMap { itemId ->
                 Remarks.selectAll().where {
@@ -131,7 +127,8 @@ class RemarkService(
         Files.createDirectories(dir)
         val storedPath = dir.resolve("${UUID.randomUUID()}.$ext")
         return tx {
-            val remark = Remarks.selectAll().where { (Remarks.itemId eq itemId) and (Remarks.authorId eq userId) }.singleOrNull()
+            val remark =
+                Remarks.selectAll().where { (Remarks.itemId eq itemId) and (Remarks.authorId eq userId) }.singleOrNull()
             if (remark == null || remark[Remarks.verdict] != Verdict.ISSUE) {
                 throw ApiError(HttpStatusCode.Conflict, "no_issue", "Сначала сохраните замечание с текстом претензии")
             }
@@ -155,8 +152,10 @@ class RemarkService(
         val row = Attachments.selectAll().where { Attachments.id eq photoId }.singleOrNull()
             ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Фото не найдено")
         if (row[Attachments.authorId] != userId) {
-            val remarkItemId = Remarks.select(Remarks.itemId).where { Remarks.id eq row[Attachments.remarkId] }.single()[Remarks.itemId].value
-            val actId = ActItems.select(ActItems.actId).where { ActItems.id eq remarkItemId }.single()[ActItems.actId].value
+            val remarkItemId = Remarks.select(Remarks.itemId).where { Remarks.id eq row[Attachments.remarkId] }
+                .single()[Remarks.itemId].value
+            val actId =
+                ActItems.select(ActItems.actId).where { ActItems.id eq remarkItemId }.single()[ActItems.actId].value
             val houseId = Acts.select(Acts.houseId).where { Acts.id eq actId }.single()[Acts.houseId].value
             val roles = rolesOfTx(userId)
             if (!(roles.chairman && roles.houseId == houseId)) {

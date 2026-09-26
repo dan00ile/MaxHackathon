@@ -23,12 +23,22 @@ import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.util.UUID
 
-@Serializable private data class OAuthResponse(@SerialName("access_token") val accessToken: String, @SerialName("expires_at") val expiresAt: Long)
-@Serializable private data class ChatMessageDto(val role: String, val content: String, val attachments: List<String>? = null)
-@Serializable private data class ChatRequest(val model: String, val temperature: Double, val messages: List<ChatMessageDto>)
-@Serializable private data class ChatChoice(val message: ChatMessageDto)
-@Serializable private data class ChatResponse(val choices: List<ChatChoice>)
-@Serializable private data class FileUploadResponse(val id: String)
+@Serializable
+private data class OAuthResponse(
+    @SerialName("access_token") val accessToken: String,
+    @SerialName("expires_at") val expiresAt: Long
+)
+
+@Serializable
+private data class ChatMessageDto(val role: String, val content: String, val attachments: List<String>? = null)
+@Serializable
+private data class ChatRequest(val model: String, val temperature: Double, val messages: List<ChatMessageDto>)
+@Serializable
+private data class ChatChoice(val message: ChatMessageDto)
+@Serializable
+private data class ChatResponse(val choices: List<ChatChoice>)
+@Serializable
+private data class FileUploadResponse(val id: String)
 
 class GigaChatClient(private val authKey: String, private val scope: String, private val model: String) {
     private val oauthBase = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
@@ -89,7 +99,13 @@ class GigaChatClient(private val authKey: String, private val scope: String, pri
                         append(
                             "file", bytes,
                             Headers.build {
-                                append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
+                                append(
+                                    HttpHeaders.ContentDisposition,
+                                    ContentDisposition.File.withParameter(
+                                        ContentDisposition.Parameters.FileName,
+                                        fileName
+                                    ).toString()
+                                )
                                 append(HttpHeaders.ContentType, mime)
                             },
                         )

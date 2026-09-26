@@ -8,12 +8,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.dao.id.EntityID
-import org.jetbrains.exposed.sql.ResultRow
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.select
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.sql.*
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.time.LocalDate
@@ -29,8 +24,8 @@ sealed interface Pending {
 fun appLink(startParam: String) = "https://max.ru/$botUsername?startapp=$startParam"
 
 private const val CONSENT_TEXT = "Бот помогает совету дома принять или обоснованно отклонить акт работ УК. " +
-    "Мы храним ваше имя в MAX, привязку к дому и ваши отметки по акту. " +
-    "Нажимая кнопку, вы соглашаетесь на обработку этих данных."
+        "Мы храним ваше имя в MAX, привязку к дому и ваши отметки по акту. " +
+        "Нажимая кнопку, вы соглашаетесь на обработку этих данных."
 
 private val receiptDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
@@ -88,7 +83,8 @@ class Bot(
     }
 
     private fun firstActAttachment(attachments: List<JsonObject>): Pair<String, String>? {
-        val att = attachments.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull in listOf("file", "image") } ?: return null
+        val att = attachments.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull in listOf("file", "image") }
+            ?: return null
         val type = att["type"]!!.jsonPrimitive.content
         val url = att["payload"]!!.jsonObject["url"]!!.jsonPrimitive.content
         val fileName = att["filename"]?.jsonPrimitive?.contentOrNull ?: if (type == "image") "photo.jpg" else "act.pdf"
@@ -110,7 +106,10 @@ class Bot(
         val houseId = roles.houseId!!
         val active = acts.activeAct(houseId)
         if (active != null) {
-            max.sendText(userId, "Сначала завершите текущий акт № ${active[Acts.id].value} (подпишите или направьте отказ).")
+            max.sendText(
+                userId,
+                "Сначала завершите текущий акт № ${active[Acts.id].value} (подпишите или направьте отказ)."
+            )
             return
         }
         val bytes = max.download(url)
@@ -210,7 +209,10 @@ class Bot(
     private suspend fun handleHouseChosen(userId: Long, houseId: Long) {
         max.sendText(
             userId, "Кто вы?",
-            listOf(listOf(cb("Житель", "role_res:$houseId")), listOf(cb("Председатель совета дома", "role_chair:$houseId"))),
+            listOf(
+                listOf(cb("Житель", "role_res:$houseId")),
+                listOf(cb("Председатель совета дома", "role_chair:$houseId"))
+            ),
         )
     }
 
@@ -318,17 +320,31 @@ class Bot(
         val houseId = act[Acts.houseId].value
         sendStatus(userId, houseId, act)
         val actNumber = act[Acts.number] ?: "без номера"
-        val residents = tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
-        residents.forEach { uid -> runCatching { max.sendText(uid, "Сбор замечаний по акту № $actNumber завершён. Спасибо!") } }
+        val residents =
+            tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
+        residents.forEach { uid ->
+            runCatching {
+                max.sendText(
+                    uid,
+                    "Сбор замечаний по акту № $actNumber завершён. Спасибо!"
+                )
+            }
+        }
     }
 
     private suspend fun handleSignPrompt(userId: Long, actId: Long) {
-        val act = try { acts.requireChairmanOf(actId, userId) } catch (e: ApiError) { max.sendText(userId, e.message); return }
+        val act = try {
+            acts.requireChairmanOf(actId, userId)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message); return
+        }
         if (act[Acts.status] != ActStatus.COLLECTING && act[Acts.status] != ActStatus.REVIEW) {
             max.sendText(userId, "Акт уже подписан, направлен отказ или принят молчаливым согласием")
             return
         }
-        val disputed = tx { ActItems.selectAll().where { (ActItems.actId eq actId) and (ActItems.decision eq Decision.DISPUTE) }.count() }
+        val disputed = tx {
+            ActItems.selectAll().where { (ActItems.actId eq actId) and (ActItems.decision eq Decision.DISPUTE) }.count()
+        }
         var text = "Подписать акт без возражений? Оспариваемых позиций: $disputed."
         if (disputed > 0) text += "\nЗамечания жителей в документ не попадут."
         max.sendText(userId, text, listOf(listOf(cb("Да, подписать", "sign_ok:$actId")), listOf(cb("Нет", "status"))))
@@ -394,7 +410,9 @@ class Bot(
         } else {
             val buttons = mutableListOf(listOf(cb("Статус акта", "status")))
             val collecting = activeActId != null &&
-                tx { Acts.select(Acts.status).where { Acts.id eq activeActId }.single()[Acts.status] } == ActStatus.COLLECTING
+                    tx {
+                        Acts.select(Acts.status).where { Acts.id eq activeActId }.single()[Acts.status]
+                    } == ActStatus.COLLECTING
             if (collecting) buttons.add(listOf(link("Отметить работы", appLink("act_$activeActId"))))
             max.sendText(userId, "Отслеживайте здесь проверку акта работ по вашему дому.", buttons)
         }

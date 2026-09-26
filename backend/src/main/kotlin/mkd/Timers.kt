@@ -23,7 +23,11 @@ fun planNotifications(receivedAt: Instant, sent: Set<String>, now: Instant, zone
     return NotifyPlan(due.dropLast(1), due.last())
 }
 
-class TimerService(private val cfg: Config, private val max: MaxBotClient, private val clock: Clock = Clock.systemUTC()) {
+class TimerService(
+    private val cfg: Config,
+    private val max: MaxBotClient,
+    private val clock: Clock = Clock.systemUTC()
+) {
     private val log = LoggerFactory.getLogger(TimerService::class.java)
 
     suspend fun loop() {
@@ -80,8 +84,9 @@ class TimerService(private val cfg: Config, private val max: MaxBotClient, priva
             }
             if (alreadyNotified) continue
             val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
-            val text = "Срок 30 дней истёк ${fmt.format(act[Acts.deadline30])}. Акт № ${act[Acts.number] ?: "без номера"} за " +
-                "${act[Acts.period] ?: "—"} считается подписанным (молчаливое согласие, п. 5 Порядка, приказ Минстроя № 318/пр)."
+            val text =
+                "Срок 30 дней истёк ${fmt.format(act[Acts.deadline30])}. Акт № ${act[Acts.number] ?: "без номера"} за " +
+                        "${act[Acts.period] ?: "—"} считается подписанным (молчаливое согласие, п. 5 Порядка, приказ Минстроя № 318/пр)."
             if (notify(act[Acts.houseId].value, actId, text, includeResidents = true)) {
                 tx { logEvent(actId, "NOTIFY_SILENT", null, "sent") }
             }
@@ -97,9 +102,11 @@ class TimerService(private val cfg: Config, private val max: MaxBotClient, priva
         // тексты считают остаток от «сейчас»: уведомление может уйти позже своего дня (простой сервера, /shift)
         return when (type) {
             "NOTIFY_D7" -> "Срок по приказу на подписание или отказ — до $d10, осталось дней: $n10. " +
-                "Посмотрите замечания жителей и примите решение."
+                    "Посмотрите замечания жителей и примите решение."
+
             "NOTIFY_D10" -> (if (n10 >= 0) "Сегодня, $d10, последний день срока по приказу." else "Срок по приказу истёк $d10.") +
-                " Подписать или отказать ещё можно до $d30; после этого акт будет считаться подписанным без ваших возражений."
+                    " Подписать или отказать ещё можно до $d30; после этого акт будет считаться подписанным без ваших возражений."
+
             "NOTIFY_D25" -> "Осталось дней: $n30. После $d30 акт будет считаться подписанным без ваших возражений."
             "NOTIFY_D28" -> "Внимание: осталось дней: $n30. После $d30 акт будет считаться подписанным."
             "NOTIFY_D29" -> "Внимание: последний день для решения — $d30 (осталось дней: $n30). Если ничего не сделать, акт будет считаться подписанным."

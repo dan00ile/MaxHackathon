@@ -33,7 +33,7 @@ object Seed {
         data class GroundSeed(val workKind: String, val title: String, val legalRef: String, val wording: String)
 
         val demandTemplate = "Устранить недостатки выполнения работ «{item}» либо исключить невыполненный объём " +
-            "из акта и направить новый акт в порядке п. 6 Порядка, утв. приказом Минстроя России № 318/пр."
+                "из акта и направить новый акт в порядке п. 6 Порядка, утв. приказом Минстроя России № 318/пр."
 
         listOf(
             GroundSeed(

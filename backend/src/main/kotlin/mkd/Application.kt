@@ -49,7 +49,8 @@ fun main() {
         val me = runBlocking {
             runCatching { max.me() }.getOrElse { error("неверный MAX_BOT_TOKEN: ${it.message}") }
         }
-        botUsername = me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
+        botUsername =
+            me["username"]?.jsonPrimitive?.content ?: error("неверный MAX_BOT_TOKEN: в ответе /me нет username")
         log.info("MAX bot me(): {}, botUsername={}", me, botUsername)
         val botInstance = Bot(cfg, max, acts, refusal, scope)
         bot = botInstance
@@ -99,7 +100,16 @@ fun main() {
                     }
                     val update = call.receive<Update>()
                     call.respond(HttpStatusCode.OK)
-                    bot?.let { b -> scope.launch { runCatching { b.handle(update) }.onFailure { log.error("update", it) } } }
+                    bot?.let { b ->
+                        scope.launch {
+                            runCatching { b.handle(update) }.onFailure {
+                                log.error(
+                                    "update",
+                                    it
+                                )
+                            }
+                        }
+                    }
                 }
             }
             api(cfg, max, acts, remarks, refusal)

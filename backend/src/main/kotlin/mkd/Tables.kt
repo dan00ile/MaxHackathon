@@ -50,7 +50,10 @@ object Chairmen : LongIdTable("chairmen") {
     val authorityBasis = text("authority_basis")       // протокол ОСС / доверенность, без проверки (FR-A4)
     val termUntil = date("term_until").nullable()
     val confirmedAt = timestamp("confirmed_at").nullable()  // null = ждёт подтверждения оператора
-    init { uniqueIndex(userId, houseId) }
+
+    init {
+        uniqueIndex(userId, houseId)
+    }
 }
 
 // §6 «Акт»
@@ -97,7 +100,10 @@ object Remarks : LongIdTable("remarks") {
     val llmStatus = enumerationByName("llm_status", 16, LlmStatus::class).default(LlmStatus.NONE)
     val createdAt = timestamp("created_at")
     val updatedAt = timestamp("updated_at")
-    init { uniqueIndex(itemId, authorId) }
+
+    init {
+        uniqueIndex(itemId, authorId)
+    }
 }
 
 // §6 «Вложение»
@@ -107,7 +113,8 @@ object Attachments : LongIdTable("attachments") {
     val mime = text("mime")
     val authorId = long("author_id").references(Users.id)
     val uploadedAt = timestamp("uploaded_at")
-    val registryNo = integer("registry_no").nullable() // номер в реестре приложений, проставляется при формировании отказа
+    val registryNo =
+        integer("registry_no").nullable() // номер в реестре приложений, проставляется при формировании отказа
 }
 
 // §6 «Основание» — справочник оператора
@@ -141,5 +148,7 @@ object Events : LongIdTable("events") {
     val details = text("details").default("")
 }
 
-val allTables = arrayOf(ManagementCompanies, Houses, Users, Chairmen, Acts, ActItems,
-    Remarks, Attachments, Grounds, Refusals, Events)
+val allTables = arrayOf(
+    ManagementCompanies, Houses, Users, Chairmen, Acts, ActItems,
+    Remarks, Attachments, Grounds, Refusals, Events
+)
