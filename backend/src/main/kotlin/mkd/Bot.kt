@@ -69,6 +69,11 @@ class Bot(
             return
         }
         val text = message.body.text?.trim() ?: return
+        // раньше ветки pending: сброс должен работать и посреди незаконченного диалога
+        if (text == "/reset") {
+            handleResetPrompt(userId)
+            return
+        }
         when (val p = pending[userId]) {
             is Pending.ChairFio -> handleChairFioText(userId, p.houseId, text)
             is Pending.ChairBasis -> handleChairBasisText(userId, p.houseId, p.fio, text)
@@ -164,6 +169,7 @@ class Bot(
                 "sign_ok" -> handleSignOk(userId, arg!!.toLong())
                 "refuse" -> handleRefuse(userId, arg!!.toLong())
                 "sent" -> handleSent(userId, arg!!.toLong())
+                "reset_ok" -> handleResetOk(userId)
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         runCatching { max.answerCallback(callback.callbackId, "ок") }
@@ -377,6 +383,30 @@ class Bot(
         } catch (e: ApiError) {
             max.sendText(userId, e.message)
         }
+    }
+
+    private suspend fun handleResetPrompt(userId: Long) {
+        if (!cfg.demoMode) {
+            max.sendText(userId, "Команда доступна только в демо-режиме.")
+            return
+        }
+        max.sendText(
+            userId,
+            "Выйти из дома и начать заново? Активный акт уйдёт в архив: сам акт, замечания жителей, " +
+                    "фото и уже сформированные документы сохранятся, но перестанут показываться в боте.",
+            listOf(listOf(cb("Да, начать заново", "reset_ok")), listOf(cb("Отмена", "status"))),
+        )
+    }
+
+    private suspend fun handleResetOk(userId: Long) {
+        if (!cfg.demoMode) return
+        pending.remove(userId)
+        val result = resetUser(userId)
+        val archived =
+            if (result.archivedActIds.isEmpty()) ""
+            else " Актов отправлено в архив: ${result.archivedActIds.size}, данные и документы сохранены."
+        max.sendText(userId, "Готово, вы вышли из дома.$archived")
+        entryPoint(userId)
     }
 
     private suspend fun handleApprove(adminUserId: Long, chairmanRowId: Long) {
