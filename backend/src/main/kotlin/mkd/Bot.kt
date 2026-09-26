@@ -203,7 +203,7 @@ class Bot(
             }
             logEvent(null, "USER_REGISTERED", userId)
         }
-        sendHouseChoice(userId)
+        entryPoint(userId) // уже привязан к дому — меню, а не повторный выбор дома
     }
 
     private suspend fun sendHouseChoice(userId: Long) {
@@ -212,6 +212,7 @@ class Bot(
     }
 
     private suspend fun handleHouseChosen(userId: Long, houseId: Long) {
+        if (tx { userRowTx(userId) }?.second != null) return rejectRebind(userId)
         max.sendText(
             userId, "Кто вы?",
             listOf(
@@ -222,14 +223,19 @@ class Bot(
     }
 
     private suspend fun handleRoleResident(userId: Long, houseId: Long) {
-        tx { Users.update({ Users.id eq userId }) { it[Users.houseId] = EntityID(houseId, Houses) } }
+        if (!tx { bindHouseTx(userId, houseId) }) return rejectRebind(userId)
         sendMenu(userId, houseId)
     }
 
     private suspend fun handleRoleChairman(userId: Long, houseId: Long) {
-        tx { Users.update({ Users.id eq userId }) { it[Users.houseId] = EntityID(houseId, Houses) } }
+        if (!tx { bindHouseTx(userId, houseId) }) return rejectRebind(userId)
         pending[userId] = Pending.ChairFio(houseId)
         max.sendText(userId, "Напишите ваши ФИО полностью — они будут в документах.")
+    }
+
+    private suspend fun rejectRebind(userId: Long) {
+        max.sendText(userId, "Дом и статус уже выбраны, сменить их нельзя. Продолжайте работу с актами.")
+        entryPoint(userId)
     }
 
     private suspend fun handleChairFioText(userId: Long, houseId: Long, text: String) {
@@ -457,3 +463,10 @@ class Bot(
         max.sendText(userId, menuText(houseActs, roles.chairman), menuButtons(houseActs))
     }
 }
+
+// Привязка к дому одна на пользователя: старые сообщения с выбором дома и роли остаются кликабельными,
+// поэтому пишем только в пустую колонку — одним update, чтобы два быстрых нажатия не обошли проверку
+fun bindHouseTx(userId: Long, houseId: Long): Boolean =
+    Users.update({ (Users.id eq userId) and Users.houseId.isNull() }) {
+        it[Users.houseId] = EntityID(houseId, Houses)
+    } > 0
