@@ -48,7 +48,7 @@ class StatusMessageTest {
                 links(buttons),
                 "ссылка на мини-апп нужна и при статусе $status",
             )
-            assertEquals(listOf("status:12"), payloads(buttons), "жителю остаётся только обновить статус")
+            assertEquals(listOf("status:12", "status"), payloads(buttons), "жителю остаётся обновить статус и вернуться к актам")
         }
     }
 
@@ -56,7 +56,7 @@ class StatusMessageTest {
     fun `chairman keeps decision buttons while collecting`() {
         val buttons = statusButtons(actRow(ActStatus.COLLECTING), isChairman = true)
         assertEquals(1, links(buttons).size)
-        assertEquals(listOf("close:12", "sign:12", "refuse:12", "status:12"), payloads(buttons))
+        assertEquals(listOf("close:12", "sign:12", "refuse:12", "status:12", "status"), payloads(buttons))
     }
 
     // решения по акту вне активных статусов уже приняты — кнопки председателя не возвращаем
@@ -64,7 +64,7 @@ class StatusMessageTest {
     fun `chairman has no decision buttons on a signed act`() {
         val buttons = statusButtons(actRow(ActStatus.SIGNED), isChairman = true)
         assertEquals(1, links(buttons).size)
-        assertEquals(listOf("status:12"), payloads(buttons))
+        assertEquals(listOf("status:12", "status"), payloads(buttons))
     }
 
     @Test

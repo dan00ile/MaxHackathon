@@ -90,5 +90,6 @@ fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
         buttons.add(listOf(cb("Сформировать отказ", "refuse:$actId")))
     }
     buttons.add(listOf(cb("Обновить статус", "status:$actId")))
+    buttons.add(listOf(cb("‹ Все акты", "status")))
     return buttons
 }
