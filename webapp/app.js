@@ -151,11 +151,11 @@ async function start() {
   }
 
   const sp = startParam();
-  let actId = state.me.activeActId;
+  let actId = state.me.actId;
   if (sp && sp.startsWith("act_")) actId = Number(sp.slice(4));
   else if (sp && sp.startsWith("refusal_")) { actId = Number(sp.slice(8)); state.tab = "refusal"; }
   if (!actId) {
-    showMessage(app, "Активного акта нет");
+    showMessage(app, "По вашему дому пока нет актов");
     return;
   }
 

@@ -4,8 +4,6 @@ import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.testcontainers.containers.PostgreSQLContainer
-import org.testcontainers.utility.DockerImageName
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -17,18 +15,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // Сброс — это целиком про состояние БД, поэтому проверяем на настоящей схеме и настоящем Postgres
-// (та же версия, что в compose.yaml): внешние ключи, каскады и типы ведут себя как на стенде.
-// Внутри insert/update неявный receiver — сама таблица, поэтому ссылки на строки заведены
-// отдельными *Ref-переменными: голое houseId там резолвилось бы в колонку, а не в наше значение.
-private val postgres by lazy {
-    PostgreSQLContainer<Nothing>(DockerImageName.parse("postgres:16-alpine")).apply { start() }
-}
-
-private val testDb by lazy {
-    Database.connect(postgres.jdbcUrl, user = postgres.username, password = postgres.password)
-        .also { db -> transaction(db) { SchemaUtils.create(*allTables) } }
-}
-
+// (стенд — в TestDb.kt). Внутри insert/update неявный receiver — сама таблица, поэтому ссылки на
+// строки заведены отдельными *Ref-переменными: голое houseId там резолвилось бы в колонку,
+// а не в наше значение.
 class ResetTest {
     private val zone: ZoneId = ZoneId.of("Europe/Moscow")
     private val chairmanId = 100L

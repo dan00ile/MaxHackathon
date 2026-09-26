@@ -60,8 +60,6 @@ fun photosOfTx(remarkId: Long): List<PhotoDto> =
     Attachments.selectAll().where { Attachments.remarkId eq remarkId }
         .map { PhotoDto(it[Attachments.id].value, "/api/photos/${it[Attachments.id].value}") }
 
-suspend fun activeActIdOf(houseId: Long): Long? = tx { activeActTx(houseId)?.get(Acts.id)?.value }
-
 @Serializable
 data class MeDto(
     val userId: Long, val name: String,
@@ -69,7 +67,7 @@ data class MeDto(
     val houseId: Long?, val houseAddress: String?,
     val roles: List<String>,
     val chairmanPending: Boolean,
-    val activeActId: Long?,
+    val actId: Long?,
     val startParam: String?,
 )
 
@@ -371,7 +369,7 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
             val houseAddress = roles.houseId?.let {
                 Houses.select(Houses.address).where { Houses.id eq it }.singleOrNull()?.get(Houses.address)
             }
-            val activeActId = roles.houseId?.let { activeActTx(it)?.get(Acts.id)?.value }
+            val actId = roles.houseId?.let { currentActTx(it)?.get(Acts.id)?.value }
             val roleNames = buildList {
                 if (roles.resident) add("RESIDENT")
                 if (roles.chairman) add("CHAIRMAN")
@@ -384,7 +382,7 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
                 houseAddress = houseAddress,
                 roles = roleNames,
                 chairmanPending = roles.chairmanPending,
-                activeActId = activeActId,
+                actId = actId,
                 startParam = auth.startParam,
             )
         }
