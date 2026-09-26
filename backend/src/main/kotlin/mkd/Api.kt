@@ -60,20 +60,7 @@ fun photosOfTx(remarkId: Long): List<PhotoDto> =
     Attachments.selectAll().where { Attachments.remarkId eq remarkId }
         .map { PhotoDto(it[Attachments.id].value, "/api/photos/${it[Attachments.id].value}") }
 
-// последний акт дома в статусе RECEIVED/COLLECTING/REVIEW
-suspend fun activeActIdOf(houseId: Long): Long? = tx {
-    Acts.select(Acts.id)
-        .where {
-            (Acts.houseId eq houseId) and (Acts.status inList listOf(
-                ActStatus.RECEIVED,
-                ActStatus.COLLECTING,
-                ActStatus.REVIEW
-            ))
-        }
-        .orderBy(Acts.createdAt to SortOrder.DESC)
-        .limit(1)
-        .singleOrNull()?.get(Acts.id)?.value
-}
+suspend fun activeActIdOf(houseId: Long): Long? = tx { activeActTx(houseId)?.get(Acts.id)?.value }
 
 @Serializable
 data class MeDto(
@@ -384,19 +371,7 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
             val houseAddress = roles.houseId?.let {
                 Houses.select(Houses.address).where { Houses.id eq it }.singleOrNull()?.get(Houses.address)
             }
-            val activeActId = roles.houseId?.let { houseId ->
-                Acts.select(Acts.id)
-                    .where {
-                        (Acts.houseId eq houseId) and (Acts.status inList listOf(
-                            ActStatus.RECEIVED,
-                            ActStatus.COLLECTING,
-                            ActStatus.REVIEW
-                        ))
-                    }
-                    .orderBy(Acts.createdAt to SortOrder.DESC)
-                    .limit(1)
-                    .singleOrNull()?.get(Acts.id)?.value
-            }
+            val activeActId = roles.houseId?.let { activeActTx(it)?.get(Acts.id)?.value }
             val roleNames = buildList {
                 if (roles.resident) add("RESIDENT")
                 if (roles.chairman) add("CHAIRMAN")

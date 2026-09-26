@@ -59,24 +59,13 @@ class ActService(
     private val timers: TimerService,
 ) {
 
-    suspend fun activeAct(houseId: Long): ResultRow? = tx {
-        Acts.selectAll()
-            .where {
-                (Acts.houseId eq houseId) and (Acts.status inList listOf(
-                    ActStatus.RECEIVED,
-                    ActStatus.COLLECTING,
-                    ActStatus.REVIEW
-                ))
-            }
-            .orderBy(Acts.createdAt to SortOrder.DESC)
-            .limit(1)
-            .singleOrNull()
-    }
+    suspend fun activeAct(houseId: Long): ResultRow? = tx { activeActTx(houseId) }
 
-    // последний акт дома независимо от статуса — запасной вариант для /status, когда активного акта уже нет
+    // последний незаархивированный акт дома независимо от статуса — запасной вариант для /status,
+    // когда активного акта уже нет
     suspend fun lastAct(houseId: Long): ResultRow? = tx {
-        Acts.selectAll().where { Acts.houseId eq houseId }.orderBy(Acts.createdAt to SortOrder.DESC).limit(1)
-            .singleOrNull()
+        Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
+            .orderBy(Acts.createdAt to SortOrder.DESC).limit(1).singleOrNull()
     }
 
     suspend fun terminalEventAt(actId: Long, status: ActStatus): Instant? {
@@ -393,7 +382,15 @@ class ActService(
     }
 }
 
-private val ACTIVE_STATUSES = setOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)
+val ACTIVE_STATUSES = listOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)
+
+// последний акт дома, который ещё в работе: активный статус и не заархивирован; вызывать только внутри tx { }
+fun activeActTx(houseId: Long): ResultRow? =
+    Acts.selectAll()
+        .where { (Acts.houseId eq houseId) and (Acts.status inList ACTIVE_STATUSES) and Acts.archivedAt.isNull() }
+        .orderBy(Acts.createdAt to SortOrder.DESC)
+        .limit(1)
+        .singleOrNull()
 
 private val statusRu = mapOf(
     ActStatus.RECEIVED to "Получен",

@@ -74,6 +74,8 @@ object Acts : LongIdTable("acts") {
     val previousActId = long("previous_act_id").nullable()  // цепочка кругов (FR-G5, Should) — в Must всегда null
     val round = integer("round").default(1)
     val signedPdfPath = text("signed_pdf_path").nullable()
+    // демо-сброс: акт убран из активного потока, но сам акт, позиции, замечания и документы сохранены
+    val archivedAt = timestamp("archived_at").nullable()
     val createdAt = timestamp("created_at")
 }
 

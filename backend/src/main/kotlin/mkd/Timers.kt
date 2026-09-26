@@ -40,7 +40,7 @@ class TimerService(
     suspend fun tick(now: Instant = clock.instant()) {
         val acts = tx {
             Acts.selectAll()
-                .where { Acts.status inList listOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW) }
+                .where { (Acts.status inList ACTIVE_STATUSES) and Acts.archivedAt.isNull() }
                 .toList()
         }
         for (act in acts) {
@@ -76,7 +76,8 @@ class TimerService(
             }
         }
 
-        val silentActs = tx { Acts.selectAll().where { Acts.status eq ActStatus.SILENT }.toList() }
+        val silentActs =
+            tx { Acts.selectAll().where { (Acts.status eq ActStatus.SILENT) and Acts.archivedAt.isNull() }.toList() }
         for (act in silentActs) {
             val actId = act[Acts.id].value
             val alreadyNotified = tx {
