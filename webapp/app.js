@@ -198,6 +198,29 @@ function renderHeader(act) {
       inner.appendChild(el("p", "hero-note", `Срок по приказу истёк ${formatDate(act.deadline10)}, но акт ещё не считается принятым — решение можно принять до ${formatDate(act.deadline30)}.`));
     }
   }
+
+  const stale = staleNote(act);
+  if (stale) inner.appendChild(stale);
+}
+
+// Ссылка-диплинк из старого сообщения в чате держит id акта навсегда, переписать то сообщение мы не
+// можем — поэтому говорим об этом здесь. Живёт в шапке: её не затирают ветки render()
+function staleNote(act) {
+  if (!state.me.actId || state.me.actId === act.id) return null;
+  const note = el("p", "hero-note", `Это акт за ${act.period || "—"} — по дому уже есть более свежий. `);
+  const open = el("button", "", "Открыть текущий");
+  open.onclick = async () => {
+    try {
+      state.act = await api(`/api/acts/${state.me.actId}`);
+    } catch (e) {
+      note.appendChild(el("span", "", ` Не удалось открыть: ${e.message}`));
+      return;
+    }
+    state.tab = "checklist";
+    render();
+  };
+  note.appendChild(open);
+  return note;
 }
 
 // кольцо обратного отсчёта: заполнено на долю оставшихся дней
