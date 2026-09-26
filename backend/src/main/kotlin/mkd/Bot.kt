@@ -465,7 +465,6 @@ class Bot(
     // «‹ Все акты» из статуса акта: меню заменяет это же сообщение; null — дома нет, отвечаем как /start
     private suspend fun menuEdit(userId: Long): SendMessageRequest? {
         val (consented, houseId) = tx { userRowTx(userId) } ?: return null
-        if (!consented || houseId == null) return null
-        return menuMessage(userId, houseId)
+        return if (consented && houseId != null) menuMessage(userId, houseId) else null
     }
 }

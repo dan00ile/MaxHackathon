@@ -48,7 +48,9 @@ class StatusMessageTest {
                 links(buttons),
                 "ссылка на мини-апп нужна и при статусе $status",
             )
-            assertEquals(listOf("status:12", "status"), payloads(buttons), "жителю остаётся обновить статус и вернуться к актам")
+            assertEquals(
+                listOf("status:12", "status"), payloads(buttons), "жителю остаётся обновить статус и вернуться к актам",
+            )
         }
     }
 

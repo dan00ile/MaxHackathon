@@ -216,49 +216,52 @@ object Pdf {
             document.add(demoNote)
         }
 
-        if (d.photos.isNotEmpty()) {
-            document.newPage()
-            document.add(Paragraph("Реестр приложений", bold))
-            document.add(Paragraph(" "))
-            val registry = PdfPTable(4)
-            registry.widthPercentage = 100f
-            listOf("№", "Позиция", "Автор", "Дата загрузки").forEach {
-                registry.addCell(
-                    PdfPCell(
-                        Paragraph(
-                            it,
-                            labelFont
-                        )
-                    )
-                )
-            }
-            d.photos.forEach { p ->
-                registry.addCell(PdfPCell(Paragraph(p.registryNo.toString(), regular)))
-                registry.addCell(PdfPCell(Paragraph("№${p.lineNo}. ${p.itemName}", regular)))
-                registry.addCell(PdfPCell(Paragraph(p.author, regular)))
-                registry.addCell(PdfPCell(Paragraph(p.uploadedAt.format(dateTimeFmt), regular)))
-            }
-            document.add(registry)
-
-            d.photos.forEach { p ->
-                document.newPage()
-                document.add(
-                    Paragraph(
-                        "Приложение № ${p.registryNo}. Позиция № ${p.lineNo} «${p.itemName}». " +
-                                "Автор: ${p.author}. Загружено: ${p.uploadedAt.format(dateTimeFmt)}",
-                        regular,
-                    ),
-                )
-                document.add(Paragraph(" "))
-                val image = Image.getInstance(p.file.path)
-                val maxWidth = document.pageSize.width - document.leftMargin() - document.rightMargin()
-                val maxHeight = document.pageSize.height - 120
-                image.scaleToFit(maxWidth, maxHeight)
-                document.add(image)
-            }
-        }
+        if (d.photos.isNotEmpty()) appendix(document, d.photos, bold, regular, labelFont)
 
         document.close()
         return out.toByteArray()
+    }
+
+    // реестр фото и по странице на каждое фото — на них ссылаются «Приложены фотоматериалы» в блоках позиций
+    private fun appendix(document: Document, photos: List<PhotoPage>, bold: Font, regular: Font, labelFont: Font) {
+        document.newPage()
+        document.add(Paragraph("Реестр приложений", bold))
+        document.add(Paragraph(" "))
+        val registry = PdfPTable(4)
+        registry.widthPercentage = 100f
+        listOf("№", "Позиция", "Автор", "Дата загрузки").forEach {
+            registry.addCell(
+                PdfPCell(
+                    Paragraph(
+                        it,
+                        labelFont
+                    )
+                )
+            )
+        }
+        photos.forEach { p ->
+            registry.addCell(PdfPCell(Paragraph(p.registryNo.toString(), regular)))
+            registry.addCell(PdfPCell(Paragraph("№${p.lineNo}. ${p.itemName}", regular)))
+            registry.addCell(PdfPCell(Paragraph(p.author, regular)))
+            registry.addCell(PdfPCell(Paragraph(p.uploadedAt.format(dateTimeFmt), regular)))
+        }
+        document.add(registry)
+
+        photos.forEach { p ->
+            document.newPage()
+            document.add(
+                Paragraph(
+                    "Приложение № ${p.registryNo}. Позиция № ${p.lineNo} «${p.itemName}». " +
+                            "Автор: ${p.author}. Загружено: ${p.uploadedAt.format(dateTimeFmt)}",
+                    regular,
+                ),
+            )
+            document.add(Paragraph(" "))
+            val image = Image.getInstance(p.file.path)
+            val maxWidth = document.pageSize.width - document.leftMargin() - document.rightMargin()
+            val maxHeight = document.pageSize.height - 120
+            image.scaleToFit(maxWidth, maxHeight)
+            document.add(image)
+        }
     }
 }

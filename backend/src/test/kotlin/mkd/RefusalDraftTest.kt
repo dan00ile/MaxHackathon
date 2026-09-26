@@ -42,7 +42,8 @@ class RefusalDraftTest {
             o.actWording,
         )
         assertEquals(
-            "Работа не выполнена или выполнена с недостатками, тогда как уборка выполняется дважды в неделю (ссылка CLEANING).",
+            "Работа не выполнена или выполнена с недостатками, " +
+                "тогда как уборка выполняется дважды в неделю (ссылка CLEANING).",
             o.demand,
         )
         assertTrue(draft.noObjectionLineNos.isEmpty())
