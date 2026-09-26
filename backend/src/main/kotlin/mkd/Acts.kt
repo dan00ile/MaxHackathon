@@ -61,8 +61,6 @@ class ActService(
 
     suspend fun activeAct(houseId: Long): ResultRow? = tx { activeActTx(houseId) }
 
-    suspend fun currentAct(houseId: Long): ResultRow? = tx { currentActTx(houseId) }
-
     suspend fun terminalEventAt(actId: Long, status: ActStatus): Instant? {
         val type = when (status) {
             ActStatus.SIGNED -> "SIGNED"
@@ -393,16 +391,12 @@ fun activeActTx(houseId: Long): ResultRow? =
         .limit(1)
         .singleOrNull()
 
-// последний незаархивированный акт дома независимо от статуса; вызывать только внутри tx { }
-fun lastActTx(houseId: Long): ResultRow? =
+// все акты дома, которые показываем в боте и в мини-аппе: любой статус, кроме архивных, свежие сверху.
+// Один источник правды для меню бота и списка в мини-аппе; вызывать только внутри tx { }
+fun houseActsTx(houseId: Long): List<ResultRow> =
     Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
         .orderBy(Acts.createdAt to SortOrder.DESC)
-        .limit(1)
-        .singleOrNull()
-
-// акт, который показываем пользователю в боте и в мини-аппе: активный, иначе последний завершённый.
-// Один источник правды: иначе бот отдаёт статус подписанного акта, а мини-апп пишет «активного акта нет»
-fun currentActTx(houseId: Long): ResultRow? = activeActTx(houseId) ?: lastActTx(houseId)
+        .toList()
 
 private fun mimeOfFileName(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
     "pdf" -> "application/pdf"

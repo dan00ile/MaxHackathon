@@ -12,7 +12,6 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
 
 // «Какой акт видит пользователь» решает БД, поэтому проверяем на настоящей схеме (стенд — TestDb.kt).
 // Регресс, из-за которого тест появился: бот показывал подписанный акт через запасную выборку,
@@ -86,46 +85,24 @@ class ActVisibilityTest {
             } get Acts.id).value
         }
 
-    private fun currentActId() = transaction(testDb) { currentActTx(houseId)?.get(Acts.id)?.value }
+    private fun houseActIds() = transaction(testDb) { houseActsTx(houseId).map { it[Acts.id].value } }
 
+    // в доме может одновременно идти проверка нескольких актов — меню бота и список в мини-аппе видят все
     @Test
-    fun `signed act stays visible to bot and mini app alike`() {
-        val actId = insertAct(ActStatus.SIGNED, daysAgo = 5)
+    fun `house lists every act, newest first`() {
+        val signed = insertAct(ActStatus.SIGNED, daysAgo = 40)
+        val collecting = insertAct(ActStatus.COLLECTING, daysAgo = 5)
+        val received = insertAct(ActStatus.RECEIVED, daysAgo = 1)
 
-        transaction(testDb) { assertNull(activeActTx(houseId), "активного акта в доме нет") }
-        assertEquals(actId, currentActId(), "но подписанный акт всё ещё показываем — обеим сторонам один и тот же")
-    }
-
-    @Test
-    fun `active act wins over an older finished one`() {
-        insertAct(ActStatus.SIGNED, daysAgo = 40)
-        val activeId = insertAct(ActStatus.COLLECTING, daysAgo = 3)
-
-        assertEquals(activeId, currentActId())
-    }
-
-    // ровно случай из чата: по первому акту направлен отказ, председатель загрузил следующий
-    @Test
-    fun `new act after a refusal becomes the visible one`() {
-        insertAct(ActStatus.REJECTED, daysAgo = 35)
-        val newId = insertAct(ActStatus.COLLECTING, daysAgo = 2)
-
-        assertEquals(newId, currentActId())
-    }
-
-    @Test
-    fun `newest finished act wins when nothing is active`() {
-        insertAct(ActStatus.REJECTED, daysAgo = 70)
-        val lastId = insertAct(ActStatus.SIGNED, daysAgo = 35)
-
-        assertEquals(lastId, currentActId())
+        assertEquals(listOf(received, collecting, signed), houseActIds())
     }
 
     @Test
     fun `archived act is invisible`() {
+        val visible = insertAct(ActStatus.COLLECTING, daysAgo = 3)
         insertAct(ActStatus.SIGNED, daysAgo = 5, archived = true)
 
-        assertNull(currentActId(), "архивный акт не показываем — мини-апп честно скажет, что актов нет")
+        assertEquals(listOf(visible), houseActIds(), "архивный акт не показываем ни в боте, ни в мини-аппе")
     }
 
     @Test

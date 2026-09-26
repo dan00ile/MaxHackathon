@@ -17,10 +17,12 @@ private val statusRu = mapOf(
     ActStatus.SILENT to "Принят молчаливым согласием",
 )
 
+fun actTitle(act: ResultRow) = "Акт № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"}"
+
 fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, eventAt: Instant? = null): String {
     val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
     val status = act[Acts.status]
-    val header = "Акт № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"}, $address\n" +
+    val header = "${actTitle(act)}, $address\n" +
             "Статус: ${statusRu[status]}"
     if (status !in ACTIVE_STATUSES) {
         return if (eventAt != null) "$header\nДата: ${fmt.format(eventAt.atZone(zone).toLocalDate())}" else header
@@ -42,14 +44,26 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
     return "$header\n$line10\n$line30"
 }
 
-// Приветствие/меню: если по дому есть акт, сразу показываем его статус. Иначе в меню висела бы
-// ссылка «Открыть акт» без указания, какой именно акт откроется, — она бы осталась в чате и после
-// того, как дом перешёл к следующему акту (ссылка-диплинк держит id навсегда)
-fun menuText(status: String?, isChairman: Boolean): String {
+private const val MENU_ACTS_LIMIT = 5
+
+// Меню: приветствие + короткая сводка по актам дома. Ссылка в меню ведёт на список актов, а не на
+// конкретный акт — поэтому сообщение в чате не устаревает, когда в доме появляется новый акт
+fun menuText(acts: List<ResultRow>, isChairman: Boolean): String {
     val head =
-        if (isChairman) "Акт присылайте сюда файлом — PDF или фото."
-        else "Отслеживайте здесь проверку акта работ по вашему дому."
-    return if (status == null) head else head + "\n\n" + status
+        if (isChairman) "Акт присылайте сюда файлом — PDF или фото. Можно несколько: каждый ведётся отдельно."
+        else "Отслеживайте здесь проверку актов работ по вашему дому."
+    if (acts.isEmpty()) return head
+    val lines = acts.take(MENU_ACTS_LIMIT).joinToString("\n") { "• ${actTitle(it)} — ${statusRu[it[Acts.status]]}" }
+    val more = if (acts.size > MENU_ACTS_LIMIT) "\n…и ещё ${acts.size - MENU_ACTS_LIMIT} — в списке" else ""
+    return "$head\n\nАкты дома:\n$lines$more"
+}
+
+// «Открыть акты дома» + по кнопке на каждый акт в работе: статус и действия председателя по нему
+fun menuButtons(acts: List<ResultRow>): List<List<Button>> {
+    if (acts.isEmpty()) return emptyList()
+    return listOf(listOf(link("Открыть акты дома", appLink("acts")))) +
+            acts.filter { it[Acts.status] in ACTIVE_STATUSES }.take(MENU_ACTS_LIMIT)
+                .map { listOf(cb(actTitle(it), "status:${it[Acts.id].value}")) }
 }
 
 private val updatedFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy 'в' HH:mm")
@@ -75,6 +89,6 @@ fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
         buttons.add(listOf(cb("Подписать", "sign:$actId")))
         buttons.add(listOf(cb("Сформировать отказ", "refuse:$actId")))
     }
-    buttons.add(listOf(cb("Обновить статус", "status")))
+    buttons.add(listOf(cb("Обновить статус", "status:$actId")))
     return buttons
 }

@@ -80,7 +80,7 @@ class Bot(
             is Pending.ReceiptDate -> handleReceiptDateText(userId, p.actId, text)
             null -> when {
                 text == "/start" || text == "/menu" -> entryPoint(userId)
-                text == "/status" -> sendActiveStatus(userId)
+                text == "/status" -> entryPoint(userId)
                 text.startsWith("/shift") -> handleShift(userId, text)
                 else -> Unit
             }
@@ -109,14 +109,6 @@ class Bot(
             return
         }
         val houseId = roles.houseId!!
-        val active = acts.activeAct(houseId)
-        if (active != null) {
-            max.sendText(
-                userId,
-                "Сначала завершите текущий акт № ${active[Acts.id].value} (подпишите или направьте отказ)."
-            )
-            return
-        }
         val bytes = max.download(url)
         val receivedAt = Instant.ofEpochMilli(timestampMs)
         val actId = acts.createFromUpload(userId, houseId, bytes, fileName, mimeOf(fileName), receivedAt, mid)
@@ -164,7 +156,9 @@ class Bot(
                 "approve" -> handleApprove(userId, arg!!.toLong())
                 "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
                 "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
-                "status" -> edit = statusEdit(userId) ?: run { sendActiveStatus(userId); null }
+                // без акта — меню новым сообщением; с актом — заменяем статус, на котором нажали кнопку
+                "status" -> if (arg == null) entryPoint(userId)
+                else edit = statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
                 "close" -> handleClose(userId, arg!!.toLong())
                 "sign" -> handleSignPrompt(userId, arg!!.toLong())
                 "sign_ok" -> handleSignOk(userId, arg!!.toLong())
@@ -177,7 +171,7 @@ class Bot(
             .onFailure { log.warn("answerCallback failed: {}", it.message) }
             .getOrDefault(false)
         // MAX не заменил сообщение (слишком старое, удалено) — статус не теряем, присылаем новым
-        if (edit != null && !answered) sendActiveStatus(userId)
+        if (edit != null && !answered) sendActStatus(userId, arg!!.toLong())
     }
 
     private fun userRowTx(userId: Long): Pair<Boolean, Long?>? =
@@ -292,18 +286,14 @@ class Bot(
         sendStatus(userId, houseId, act)
     }
 
-    private suspend fun sendActiveStatus(userId: Long) {
-        val houseId = rolesOf(userId).houseId
-        if (houseId == null) {
-            max.sendText(userId, "Сначала выберите дом.")
+    private suspend fun sendActStatus(userId: Long, actId: Long) {
+        val act = try {
+            acts.requireMemberOf(actId, userId)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
             return
         }
-        val act = acts.currentAct(houseId)
-        if (act == null) {
-            max.sendText(userId, "По вашему дому пока нет актов.")
-            return
-        }
-        sendStatus(userId, houseId, act)
+        sendStatus(userId, act[Acts.houseId].value, act)
     }
 
     private suspend fun houseAddress(houseId: Long): String =
@@ -327,10 +317,10 @@ class Bot(
         statusButtons(act, rolesOf(userId).chairman),
     )
 
-    // null — заменять нечем (нет дома или акта), отвечаем обычным сообщением
-    private suspend fun statusEdit(userId: Long): SendMessageRequest? {
-        val houseId = rolesOf(userId).houseId ?: return null
-        return acts.currentAct(houseId)?.let { statusMessage(userId, houseId, it, updatedAt = Instant.now()) }
+    // null — акт недоступен (архив, чужой дом): sendActStatus ответит обычным сообщением с причиной
+    private suspend fun statusEdit(userId: Long, actId: Long): SendMessageRequest? {
+        val act = runCatching { acts.requireMemberOf(actId, userId) }.getOrNull() ?: return null
+        return statusMessage(userId, act[Acts.houseId].value, act, updatedAt = Instant.now())
     }
 
     private suspend fun handleRcvOther(userId: Long, actId: Long) {
@@ -376,7 +366,7 @@ class Bot(
         }
         var text = "Подписать акт без возражений? Оспариваемых позиций: $disputed."
         if (disputed > 0) text += "\nЗамечания жителей в документ не попадут."
-        max.sendText(userId, text, listOf(listOf(cb("Да, подписать", "sign_ok:$actId")), listOf(cb("Нет", "status"))))
+        max.sendText(userId, text, listOf(listOf(cb("Да, подписать", "sign_ok:$actId")), listOf(cb("Нет", "status:$actId"))))
     }
 
     private suspend fun handleSignOk(userId: Long, actId: Long) {
@@ -455,11 +445,7 @@ class Bot(
             return
         }
         val roles = rolesOf(userId)
-        val act = acts.currentAct(houseId)
-        max.sendText(
-            userId,
-            menuText(act?.let { actStatusText(houseId, it) }, roles.chairman),
-            if (act == null) emptyList() else statusButtons(act, roles.chairman),
-        )
+        val houseActs = tx { houseActsTx(houseId) }
+        max.sendText(userId, menuText(houseActs, roles.chairman), menuButtons(houseActs))
     }
 }
