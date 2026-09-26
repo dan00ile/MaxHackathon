@@ -67,7 +67,6 @@ data class MeDto(
     val houseId: Long?, val houseAddress: String?,
     val roles: List<String>,
     val chairmanPending: Boolean,
-    val actId: Long?,
     val startParam: String?,
 )
 
@@ -104,6 +103,18 @@ data class ActDto(
     val items: List<ItemDto>, val workKinds: List<WorkKindDto>,
     val hasRefusal: Boolean,
 )
+
+// строка списка актов дома: без позиций, только то, что нужно карточке в списке
+@Serializable
+data class ActSummaryDto(
+    val id: Long, val number: String?, val period: String?, val status: String, val recognition: String,
+    val receivedAt: String, val deadline10: String, val deadline30: String, val daysLeft10: Long, val daysLeft30: Long,
+    val itemCount: Int, val issueCount: Int,
+    val myPending: Int?, // сколько позиций житель ещё не отметил — только пока идёт сбор
+)
+
+@Serializable
+data class HouseActsDto(val houseAddress: String, val isChairman: Boolean, val acts: List<ActSummaryDto>)
 
 @Serializable
 data class ItemInput(
@@ -185,7 +196,40 @@ private suspend fun actDto(cfg: Config, actId: Long, userId: Long): ActDto = tx 
     )
 }
 
+private suspend fun houseActsDto(cfg: Config, userId: Long): HouseActsDto = tx {
+    val roles = rolesOfTx(userId)
+    val houseId = roles.houseId
+        ?: throw ApiError(HttpStatusCode.Forbidden, "no_house", "Сначала выберите дом в боте")
+    val address = Houses.select(Houses.address).where { Houses.id eq houseId }.single()[Houses.address]
+    val now = Instant.now()
+    val summaries = houseActsTx(houseId).map { act ->
+        val actId = act[Acts.id].value
+        val itemIds = ActItems.select(ActItems.id).where { ActItems.actId eq actId }.map { it[ActItems.id] }
+        val remarks = if (itemIds.isEmpty()) emptyList()
+        else Remarks.select(Remarks.verdict, Remarks.authorId).where { Remarks.itemId inList itemIds }.toList()
+        ActSummaryDto(
+            id = actId, number = act[Acts.number], period = act[Acts.period],
+            status = act[Acts.status].name, recognition = act[Acts.recognition].name,
+            receivedAt = act[Acts.receivedAt].toString(),
+            deadline10 = act[Acts.deadline10].toString(), deadline30 = act[Acts.deadline30].toString(),
+            daysLeft10 = Deadlines.daysLeft(act[Acts.deadline10], now, cfg.zone),
+            daysLeft30 = Deadlines.daysLeft(act[Acts.deadline30], now, cfg.zone),
+            itemCount = itemIds.size,
+            issueCount = remarks.count { it[Remarks.verdict] == Verdict.ISSUE },
+            myPending = if (act[Acts.status] == ActStatus.COLLECTING) {
+                itemIds.size - remarks.count { it[Remarks.authorId] == userId }
+            } else null,
+        )
+    }
+    HouseActsDto(address, roles.chairman, summaries)
+}
+
 fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService, refusal: RefusalService) {
+    get("/api/acts") {
+        val auth = call.authUser(cfg)
+        call.respond(houseActsDto(cfg, auth.userId))
+    }
+
     get("/api/acts/{id}") {
         val auth = call.authUser(cfg)
         val actId = call.parameters["id"]!!.toLong()
@@ -371,7 +415,6 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
             val houseAddress = roles.houseId?.let {
                 Houses.select(Houses.address).where { Houses.id eq it }.singleOrNull()?.get(Houses.address)
             }
-            val actId = roles.houseId?.let { currentActTx(it)?.get(Acts.id)?.value }
             val roleNames = buildList {
                 if (roles.resident) add("RESIDENT")
                 if (roles.chairman) add("CHAIRMAN")
@@ -384,7 +427,6 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
                 houseAddress = houseAddress,
                 roles = roleNames,
                 chairmanPending = roles.chairmanPending,
-                actId = actId,
                 startParam = auth.startParam,
             )
         }

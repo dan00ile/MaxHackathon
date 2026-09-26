@@ -24,10 +24,10 @@ class StatusMessageTest {
         botUsername = "mkd_test_bot"
     }
 
-    private fun actRow(status: ActStatus) = ResultRow.createAndFillValues(
+    private fun actRow(status: ActStatus, id: Long = 12, number: String = "12") = ResultRow.createAndFillValues(
         mapOf<Expression<*>, Any?>(
-            Acts.id to EntityID(12L, Acts),
-            Acts.number to "12",
+            Acts.id to EntityID(id, Acts),
+            Acts.number to number,
             Acts.period to "сентябрь 2026",
             Acts.status to status,
             Acts.deadline10 to LocalDate.of(2026, 10, 6),
@@ -47,21 +47,21 @@ class StatusMessageTest {
                 links(buttons),
                 "ссылка на мини-апп нужна и при статусе $status",
             )
-            assertEquals(listOf("status"), payloads(buttons), "жителю остаётся только обновить статус")
+            assertEquals(listOf("status:12"), payloads(buttons), "жителю остаётся только обновить статус")
         }
     }
 
     @Test fun `chairman keeps decision buttons while collecting`() {
         val buttons = statusButtons(actRow(ActStatus.COLLECTING), isChairman = true)
         assertEquals(1, links(buttons).size)
-        assertEquals(listOf("close:12", "sign:12", "refuse:12", "status"), payloads(buttons))
+        assertEquals(listOf("close:12", "sign:12", "refuse:12", "status:12"), payloads(buttons))
     }
 
     // решения по акту вне активных статусов уже приняты — кнопки председателя не возвращаем
     @Test fun `chairman has no decision buttons on a signed act`() {
         val buttons = statusButtons(actRow(ActStatus.SIGNED), isChairman = true)
         assertEquals(1, links(buttons).size)
-        assertEquals(listOf("status"), payloads(buttons))
+        assertEquals(listOf("status:12"), payloads(buttons))
     }
 
     @Test fun `finished act text shows the terminal event date instead of countdowns`() {
@@ -74,25 +74,28 @@ class StatusMessageTest {
         assertTrue("осталось дней" !in text, "по завершённому акту обратный отсчёт не показываем")
     }
 
-    // приветствие без статуса означало бы «Открыть акт» без указания, какой акт откроется:
-    // такое сообщение переживает акт и потом ведёт на прошлый
-    @Test fun `menu text carries the act it links to`() {
-        val text = menuText(actRow(ActStatus.REJECTED), address, isChairman = false, now = now, zone = zone)
+    @Test fun `menu lists every act of the house`() {
+        val text = menuText(listOf(actRow(ActStatus.COLLECTING, id = 13, number = "13"), actRow(ActStatus.REJECTED)), isChairman = false)
 
-        assertContains(text, "Отслеживайте здесь проверку акта работ по вашему дому.")
-        assertContains(text, "Акт № 12 за сентябрь 2026")
-        assertContains(text, "Статус: Отказ направлен")
+        assertContains(text, "Отслеживайте здесь проверку актов работ по вашему дому.")
+        assertContains(text, "• Акт № 13 за сентябрь 2026 — Идёт сбор замечаний")
+        assertContains(text, "• Акт № 12 за сентябрь 2026 — Отказ направлен")
     }
 
-    @Test fun `menu text without an act is just the greeting`() {
+    // меню не ведёт на конкретный акт: сообщение в чате переживает акт, а список актов — всегда актуален
+    @Test fun `menu links to the house act list plus status of each active act`() {
+        val buttons = menuButtons(listOf(actRow(ActStatus.COLLECTING, id = 13, number = "13"), actRow(ActStatus.SIGNED)))
+
+        assertEquals(listOf(Button("link", "Открыть акты дома", url = "https://max.ru/mkd_test_bot?startapp=acts")), links(buttons))
+        assertEquals(listOf("status:13"), payloads(buttons), "по завершённому акту действий в меню нет")
+    }
+
+    @Test fun `menu without acts is just the greeting`() {
         assertEquals(
-            "Акт присылайте сюда файлом — PDF или фото.",
-            menuText(null, address, isChairman = true, now = now, zone = zone),
+            "Акт присылайте сюда файлом — PDF или фото. Можно несколько: каждый ведётся отдельно.",
+            menuText(emptyList(), isChairman = true),
         )
-        assertEquals(
-            "Отслеживайте здесь проверку акта работ по вашему дому.",
-            menuText(null, address, isChairman = false, now = now, zone = zone),
-        )
+        assertEquals(emptyList(), menuButtons(emptyList()))
     }
 
     @Test fun `active act text shows both deadlines`() {

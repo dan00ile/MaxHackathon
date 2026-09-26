@@ -61,8 +61,6 @@ class ActService(
 
     suspend fun activeAct(houseId: Long): ResultRow? = tx { activeActTx(houseId) }
 
-    suspend fun currentAct(houseId: Long): ResultRow? = tx { currentActTx(houseId) }
-
     suspend fun terminalEventAt(actId: Long, status: ActStatus): Instant? {
         val type = when (status) {
             ActStatus.SIGNED -> "SIGNED"
@@ -393,16 +391,14 @@ fun activeActTx(houseId: Long): ResultRow? =
         .limit(1)
         .singleOrNull()
 
-// последний незаархивированный акт дома независимо от статуса; вызывать только внутри tx { }
-fun lastActTx(houseId: Long): ResultRow? =
+// все акты дома, которые показываем в боте и в мини-аппе: любой статус, кроме архивных, свежие сверху.
+// Один источник правды для меню бота и списка в мини-аппе; вызывать только внутри tx { }
+fun houseActsTx(houseId: Long): List<ResultRow> =
     Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
         .orderBy(Acts.createdAt to SortOrder.DESC)
-        .limit(1)
-        .singleOrNull()
+        .toList()
 
-// акт, который показываем пользователю в боте и в мини-аппе: активный, иначе последний завершённый.
-// Один источник правды: иначе бот отдаёт статус подписанного акта, а мини-апп пишет «активного акта нет»
-fun currentActTx(houseId: Long): ResultRow? = activeActTx(houseId) ?: lastActTx(houseId)
+fun actTitle(act: ResultRow) = "Акт № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"}"
 
 private val statusRu = mapOf(
     ActStatus.RECEIVED to "Получен",
@@ -416,7 +412,7 @@ private val statusRu = mapOf(
 fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, eventAt: Instant? = null): String {
     val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
     val status = act[Acts.status]
-    val header = "Акт № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"}, $address\n" +
+    val header = "${actTitle(act)}, $address\n" +
             "Статус: ${statusRu[status]}"
     if (status !in ACTIVE_STATUSES) {
         return if (eventAt != null) "$header\nДата: ${fmt.format(eventAt.atZone(zone).toLocalDate())}" else header
@@ -438,18 +434,26 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
     return "$header\n$line10\n$line30"
 }
 
-// Приветствие/меню: если по дому есть акт, сразу показываем его статус. Иначе в меню висела бы
-// ссылка «Открыть акт» без указания, какой именно акт откроется, — она бы осталась в чате и после
-// того, как дом перешёл к следующему акту (ссылка-диплинк держит id навсегда)
-fun menuText(
-    act: ResultRow?, address: String, isChairman: Boolean,
-    now: Instant, zone: ZoneId, eventAt: Instant? = null,
-): String {
+private const val MENU_ACTS_LIMIT = 5
+
+// Меню: приветствие + короткая сводка по актам дома. Ссылка в меню ведёт на список актов, а не на
+// конкретный акт — поэтому сообщение в чате не устаревает, когда в доме появляется новый акт
+fun menuText(acts: List<ResultRow>, isChairman: Boolean): String {
     val head =
-        if (isChairman) "Акт присылайте сюда файлом — PDF или фото."
-        else "Отслеживайте здесь проверку акта работ по вашему дому."
-    if (act == null) return head
-    return head + "\n\n" + statusText(act, address, now, zone, eventAt)
+        if (isChairman) "Акт присылайте сюда файлом — PDF или фото. Можно несколько: каждый ведётся отдельно."
+        else "Отслеживайте здесь проверку актов работ по вашему дому."
+    if (acts.isEmpty()) return head
+    val lines = acts.take(MENU_ACTS_LIMIT).joinToString("\n") { "• ${actTitle(it)} — ${statusRu[it[Acts.status]]}" }
+    val more = if (acts.size > MENU_ACTS_LIMIT) "\n…и ещё ${acts.size - MENU_ACTS_LIMIT} — в списке" else ""
+    return "$head\n\nАкты дома:\n$lines$more"
+}
+
+// «Открыть акты дома» + по кнопке на каждый акт в работе: статус и действия председателя по нему
+fun menuButtons(acts: List<ResultRow>): List<List<Button>> {
+    if (acts.isEmpty()) return emptyList()
+    return listOf(listOf(link("Открыть акты дома", appLink("acts")))) +
+            acts.filter { it[Acts.status] in ACTIVE_STATUSES }.take(MENU_ACTS_LIMIT)
+                .map { listOf(cb(actTitle(it), "status:${it[Acts.id].value}")) }
 }
 
 fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
@@ -470,7 +474,7 @@ fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
         buttons.add(listOf(cb("Подписать", "sign:$actId")))
         buttons.add(listOf(cb("Сформировать отказ", "refuse:$actId")))
     }
-    buttons.add(listOf(cb("Обновить статус", "status")))
+    buttons.add(listOf(cb("Обновить статус", "status:$actId")))
     return buttons
 }
 

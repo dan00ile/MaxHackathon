@@ -230,6 +230,69 @@ body {
 }
 .hero-note button { padding: 0; background: none; font-weight: 650; text-decoration: underline; }
 
+.hero-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  margin: -4px 0 8px -8px;
+  padding: 0 12px 0 4px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+.hero-back svg { width: 18px; height: 18px; }
+.hero-back:active { background: rgb(255 255 255 / 0.24); }
+.hero-back.is-busy { --spin: #fff; }
+
+.hero-sub { margin: -4px 0 0; font-size: 14px; opacity: 0.85; }
+
+/* ───────────── Список актов дома ───────────── */
+.act-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 12px 14px 16px;
+  margin-bottom: 10px;
+  text-align: left;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: transform 0.1s;
+  animation: rise 0.35s cubic-bezier(.2,.8,.2,1) both;
+}
+.act-row:active { transform: scale(0.985); }
+.act-row--COLLECTING { box-shadow: inset 4px 0 0 var(--positive), var(--shadow-card); }
+.act-row--REVIEW { box-shadow: inset 4px 0 0 var(--warning), var(--shadow-card); }
+.act-row--RECEIVED { box-shadow: inset 4px 0 0 var(--accent), var(--shadow-card); }
+
+.act-row-main { flex: 1; min-width: 0; }
+.act-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.act-row-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.act-row-sub { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
+.act-row .item-meta { margin-top: 8px; }
+.act-row-chevron { display: grid; color: var(--text-3); }
+.act-row-chevron svg { width: 18px; height: 18px; }
+
+.act-status {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+.act-status--RECEIVED { color: var(--accent); background: var(--accent-fade); }
+.act-status--COLLECTING, .act-status--SIGNED { color: var(--positive); background: var(--positive-fade); }
+.act-status--REVIEW { color: var(--warning); background: var(--warning-fade); }
+.act-status--REJECTED { color: var(--negative); background: var(--negative-fade); }
+.act-status--SILENT { color: var(--silent); background: var(--silent-fade); }
+
 /* ───────────── Итоговый баннер ───────────── */
 .result-banner {
   display: flex;

@@ -65,7 +65,7 @@ const STATUS_RU = {
 };
 const FINAL = ["SIGNED", "REJECTED", "SILENT"];
 
-let state = { me: null, act: null, tab: "checklist" };
+let state = { me: null, view: "list", house: null, act: null, tab: "checklist" };
 // Живые обновления: каждая отрисованная карточка кладёт сюда функцию «перечитай item и обнови себя».
 // Вызываются после ответа сервера на своё действие и после фонового опроса
 let live = [];
@@ -79,6 +79,8 @@ const ICON = {
   cross: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg>',
+  chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7"/></svg>',
   doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>',
 };
 
@@ -213,24 +215,62 @@ async function start() {
     return;
   }
 
-  const sp = startParam();
-  let actId = state.me.actId;
-  if (sp && sp.startsWith("act_")) actId = Number(sp.slice(4));
-  else if (sp && sp.startsWith("refusal_")) { actId = Number(sp.slice(8)); state.tab = "refusal"; }
-  if (!actId) {
-    showMessage(app, "По вашему дому пока нет актов");
-    return;
-  }
+  // ссылка из уведомления ведёт сразу в акт; меню бота и всё остальное — в список актов дома
+  const sp = startParam() || "";
+  if (sp.startsWith("act_")) await openAct(Number(sp.slice(4)));
+  else if (sp.startsWith("refusal_")) await openAct(Number(sp.slice(8)), "refusal");
+  else await showList();
 
+  if (WA && WA.BackButton) WA.BackButton.onClick(showList);
+  setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+}
+
+async function openAct(id, tab = "checklist") {
   try {
-    state.act = await api(`/api/acts/${actId}`);
+    state.act = await api(`/api/acts/${id}`);
   } catch (e) {
-    showMessage(app, "Ошибка: " + e.message, true);
+    // старая ссылка на архивный/чужой акт — не тупик: показываем список и объясняем
+    await showList(`Не удалось открыть акт: ${e.message}`);
     return;
   }
+  state.view = "act";
+  state.tab = tab;
+  if (WA && WA.BackButton) WA.BackButton.show();
   render();
-  setInterval(() => { if (!document.hidden) refreshAct(); }, POLL_MS);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAct(); });
+  window.scrollTo(0, 0);
+}
+
+async function showList(notice) {
+  if (WA && WA.BackButton) WA.BackButton.hide();
+  state.view = "list";
+  state.act = null;
+  live = [];
+  try {
+    state.house = await api("/api/acts");
+  } catch (e) {
+    document.getElementById("header").innerHTML = "";
+    showMessage(document.getElementById("app"), "Ошибка: " + e.message, true);
+    return;
+  }
+  renderList(notice);
+  window.scrollTo(0, 0);
+}
+
+function refresh() {
+  if (state.view === "list") refreshList();
+  else refreshAct();
+}
+
+async function refreshList() {
+  try {
+    const fresh = await api("/api/acts");
+    if (state.view !== "list" || JSON.stringify(fresh) === JSON.stringify(state.house)) return;
+    state.house = fresh;
+    const y = window.scrollY;
+    renderList();
+    window.scrollTo(0, y);
+  } catch (e) { /* повторим на следующем тике */ }
 }
 
 // Фоновый опрос: отметки других жителей приходят без перезагрузки. Карточки обновляются на месте,
@@ -263,15 +303,10 @@ function formatDate(iso) {
 }
 
 function renderHeader(act) {
-  const header = document.getElementById("header");
-  header.innerHTML = "";
-  const inner = el("div", "hero-inner");
-  header.appendChild(inner);
-
-  const eyebrow = el("p", "app-eyebrow");
-  eyebrow.innerHTML = ICON.home;
-  eyebrow.append(document.createTextNode(act.houseAddress));
-  inner.appendChild(eyebrow);
+  const inner = heroShell();
+  const back = iconButton("back", "Все акты", "hero-back");
+  back.onclick = () => busy(back, showList);
+  inner.append(back, eyebrow(act.houseAddress));
 
   inner.appendChild(el("h1", "app-title", `Акт № ${act.number || "без номера"} за ${act.period || "—"}`));
   inner.appendChild(el("span", `status-pill status-${act.status}`, STATUS_RU[act.status] || act.status));
@@ -286,28 +321,89 @@ function renderHeader(act) {
     }
   }
 
-  const stale = staleNote(act);
-  if (stale) inner.appendChild(stale);
 }
 
-// Ссылка-диплинк из старого сообщения в чате держит id акта навсегда, переписать то сообщение мы не
-// можем — поэтому говорим об этом здесь. Живёт в шапке: её не затирают ветки render()
-function staleNote(act) {
-  if (!state.me.actId || state.me.actId === act.id) return null;
-  const note = el("p", "hero-note", `Это акт за ${act.period || "—"} — по дому уже есть более свежий. `);
-  const open = button("Открыть текущий");
-  open.onclick = () => busy(open, async () => {
-    try {
-      state.act = await api(`/api/acts/${state.me.actId}`);
-    } catch (e) {
-      note.appendChild(el("span", "", ` Не удалось открыть: ${e.message}`));
-      return;
-    }
-    state.tab = "checklist";
-    render();
-  });
-  note.appendChild(open);
-  return note;
+function heroShell() {
+  const header = document.getElementById("header");
+  header.innerHTML = "";
+  const inner = el("div", "hero-inner");
+  header.appendChild(inner);
+  return inner;
+}
+
+function eyebrow(address) {
+  const p = el("p", "app-eyebrow");
+  p.innerHTML = ICON.home;
+  p.append(document.createTextNode(address));
+  return p;
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+// ───── Список актов дома ─────
+function renderList(notice) {
+  const { houseAddress, isChairman, acts } = state.house;
+  const inner = heroShell();
+  inner.appendChild(eyebrow(houseAddress));
+  inner.appendChild(el("h1", "app-title", "Акты дома"));
+  const active = acts.filter((a) => !FINAL.includes(a.status));
+  const done = acts.filter((a) => FINAL.includes(a.status));
+  inner.appendChild(el("p", "hero-sub", acts.length
+    ? `${active.length} в работе · ${done.length} ${plural(done.length, "завершён", "завершено", "завершено")}`
+    : "Пока ни одного акта"));
+
+  const app = document.getElementById("app");
+  app.innerHTML = "";
+  if (notice) app.appendChild(el("div", "error", notice));
+  if (!acts.length) {
+    showMessage(app, isChairman
+      ? "Пришлите акт боту в чат файлом — PDF или фото. Можно несколько: каждый акт проверяется отдельно."
+      : "По дому пока нет актов. Бот пришлёт ссылку, когда председатель откроет сбор замечаний.");
+    return;
+  }
+  if (active.length) {
+    app.appendChild(el("p", "section-title", "В работе"));
+    active.forEach((a) => app.appendChild(actRow(a, isChairman)));
+  }
+  if (done.length) {
+    app.appendChild(el("p", "section-title", "Завершённые"));
+    done.forEach((a) => app.appendChild(actRow(a, isChairman)));
+  }
+}
+
+function actRow(a, isChairman) {
+  const row = el("button", `act-row act-row--${a.status}`);
+  row.type = "button";
+  row.onclick = () => busy(row, () => openAct(a.id));
+
+  const top = el("div", "act-row-top");
+  top.append(el("b", "act-row-title", `Акт № ${a.number || "без номера"}`), el("span", `act-status act-status--${a.status}`, STATUS_RU[a.status] || a.status));
+  const sub = el("p", "act-row-sub", `за ${a.period || "—"} · получен ${shortDate(a.receivedAt)}`);
+
+  const chips = el("div", "item-meta");
+  const chip = (text, mod) => chips.appendChild(el("span", "chip" + (mod ? " chip--" + mod : ""), text));
+  if (a.status === "RECEIVED" && a.recognition === "PENDING") chip("распознаётся…");
+  else if (a.status === "RECEIVED" && isChairman) chip("проверьте позиции и откройте сбор", "accent");
+  if (a.myPending > 0) chip(`отметьте ${a.myPending} ${plural(a.myPending, "позицию", "позиции", "позиций")}`, "accent");
+  else if (a.myPending === 0) chip("вы отметили всё", "positive");
+  if (!FINAL.includes(a.status)) {
+    const left = Math.max(a.daysLeft30, 0);
+    chip(`${left} ${plural(left, "день", "дня", "дней")} до ${shortDate(a.deadline30)}`, left <= 5 ? "negative" : null);
+  }
+  if (a.issueCount) chip(`${a.issueCount} ${plural(a.issueCount, "претензия", "претензии", "претензий")}`, "negative");
+
+  const main = el("div", "act-row-main");
+  main.append(top, sub);
+  if (chips.children.length) main.appendChild(chips);
+  const chevron = el("span", "act-row-chevron");
+  chevron.innerHTML = ICON.chevron;
+  row.append(main, chevron);
+  return row;
 }
 
 // кольцо обратного отсчёта: заполнено на долю оставшихся дней
