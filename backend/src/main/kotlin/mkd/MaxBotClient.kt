@@ -74,8 +74,9 @@ data class InlineKeyboardPayload(val buttons: List<List<Button>>)
 data class Attachment(val type: String, val payload: kotlinx.serialization.json.JsonElement)
 @Serializable
 data class SendMessageRequest(val text: String? = null, val attachments: List<Attachment> = emptyList())
+// message != null — MAX заменяет сообщение, на котором нажата кнопка, вместо отправки нового
 @Serializable
-data class AnswerRequest(val notification: String)
+data class AnswerRequest(val notification: String? = null, val message: SendMessageRequest? = null)
 
 @Serializable
 data class SubscriptionDto(val url: String)
@@ -124,9 +125,15 @@ class MaxBotClient(private val token: String, private val base: String) {
         return response.body()
     }
 
+    fun messageBody(text: String, buttons: List<List<Button>> = emptyList()) =
+        SendMessageRequest(text = text, attachments = listOfNotNull(keyboardAttachment(buttons)))
+
     suspend fun sendText(userId: Long, text: String, buttons: List<List<Button>> = emptyList()) {
-        val attachments = listOfNotNull(keyboardAttachment(buttons))
-        send(userId, SendMessageRequest(text = text, attachments = attachments))
+        sendMessage(userId, messageBody(text, buttons))
+    }
+
+    suspend fun sendMessage(userId: Long, body: SendMessageRequest) {
+        send(userId, body)
     }
 
     private suspend fun send(userId: Long, body: SendMessageRequest, retriesLeft: Int = 5) {
@@ -187,13 +194,23 @@ class MaxBotClient(private val token: String, private val base: String) {
         send(userId, SendMessageRequest(text = text, attachments = attachments))
     }
 
-    suspend fun answerCallback(callbackId: String, notification: String) {
-        http.post("$base/answers") {
+    // false — MAX не принял ответ (например, сообщение слишком старое для замены): решает вызывающий
+    suspend fun answerCallback(
+        callbackId: String,
+        notification: String? = null,
+        message: SendMessageRequest? = null,
+    ): Boolean {
+        val response = http.post("$base/answers") {
             header(HttpHeaders.Authorization, token)
             url { parameters.append("callback_id", callbackId) }
             contentType(ContentType.Application.Json)
-            setBody(AnswerRequest(notification))
+            setBody(AnswerRequest(notification, message))
         }
+        if (!response.status.isSuccess()) {
+            log.warn("answerCallback failed: {} {}", response.status, response.bodyAsText())
+            return false
+        }
+        return true
     }
 
     suspend fun download(url: String): ByteArray = http.get(url).body()
