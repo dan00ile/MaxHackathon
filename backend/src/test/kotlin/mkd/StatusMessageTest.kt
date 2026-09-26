@@ -98,6 +98,27 @@ class StatusMessageTest {
         assertEquals(emptyList(), menuButtons(emptyList()))
     }
 
+    // «Обновить статус» заменяет прежнее сообщение — без пометки времени непонятно, что оно свежее
+    @Test fun `updated note says when the status was refreshed`() {
+        assertEquals("\n\nОбновлено 26.09.2026 в 12:00", updatedNote(now, zone))
+    }
+
+    @Test fun `status text has no updated note on its own`() {
+        assertTrue("Обновлено" !in statusText(actRow(ActStatus.COLLECTING), address, now, zone))
+    }
+
+    // MAX различает «показать всплывашку» и «заменить сообщение»: лишние null в теле ломают разбор
+    @Test fun `answer with a message body omits the notification field`() {
+        val body = AppJson.encodeToString(
+            AnswerRequest.serializer(),
+            AnswerRequest(message = SendMessageRequest(text = "Статус")),
+        )
+
+        assertTrue("notification" !in body, body)
+        assertContains(body, "\"message\"")
+        assertContains(body, "Статус")
+    }
+
     @Test fun `active act text shows both deadlines`() {
         val text = statusText(actRow(ActStatus.COLLECTING), address, now, zone)
 
