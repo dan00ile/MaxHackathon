@@ -2,6 +2,7 @@ const WA = window.WebApp;
 const params = new URLSearchParams(location.search);
 const DEV_USER = params.get("devUser");          // локальная отладка вне MAX (нужен DEV_AUTH=true на бэкенде)
 const DEV_START = params.get("startapp");         // локальная отладка стартового параметра, напр. ?startapp=act_1
+const POLL_MS = 10000;                            // как часто подтягиваем чужие отметки
 
 function authHeaders() {
   const headers = {};
@@ -23,13 +24,18 @@ async function api(path, opts = {}) {
   return r.status === 204 ? null : r.json();
 }
 
-// сервер требует X-Max-Init-Data/X-Dev-User-Id даже на статичные картинки — обычный <img src> их не передаст
+// сервер требует X-Max-Init-Data/X-Dev-User-Id даже на статичные картинки — обычный <img src> их не передаст.
+// Кэш blob-URL: карточки теперь перерисовываются чаще, не качаем одно фото дважды
+const imageCache = new Map();
 async function loadImage(url, imgEl) {
   try {
-    const r = await fetch(window.API_BASE + url, { headers: authHeaders() });
-    if (!r.ok) return;
-    imgEl.src = URL.createObjectURL(await r.blob());
-  } catch (e) { /* миниатюра просто не загрузится */ }
+    if (!imageCache.has(url)) {
+      imageCache.set(url, fetch(window.API_BASE + url, { headers: authHeaders() })
+        .then((r) => (r.ok ? r.blob() : Promise.reject()))
+        .then((b) => URL.createObjectURL(b)));
+    }
+    imgEl.src = await imageCache.get(url);
+  } catch (e) { imageCache.delete(url); /* миниатюра просто не загрузится */ }
 }
 
 // уменьшаем фото на клиенте перед загрузкой: длинная сторона ≤1600px, JPEG q=0.8
@@ -57,8 +63,13 @@ const STATUS_RU = {
   REJECTED: "Отказ направлен",
   SILENT: "Принят молчаливым согласием",
 };
+const FINAL = ["SIGNED", "REJECTED", "SILENT"];
 
 let state = { me: null, act: null, tab: "checklist" };
+// Живые обновления: каждая отрисованная карточка кладёт сюда функцию «перечитай item и обнови себя».
+// Вызываются после ответа сервера на своё действие и после фонового опроса
+let live = [];
+function syncLive() { live.forEach((f) => f()); }
 
 const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
@@ -67,6 +78,8 @@ const ICON = {
   camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></svg>',
   cross: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>',
 };
 
 function el(tag, className, text) {
@@ -78,9 +91,48 @@ function el(tag, className, text) {
 
 function iconButton(icon, text, className) {
   const b = el("button", className);
+  b.type = "button";
   b.innerHTML = ICON[icon];
   b.append(document.createTextNode(text));
   return b;
+}
+
+function button(text, className, onclick) {
+  const b = el("button", className, text);
+  b.type = "button";
+  if (onclick) b.onclick = onclick;
+  return b;
+}
+
+// кнопка в состоянии «идёт запрос»: блокируем повторные нажатия и показываем спиннер
+async function busy(btn, fn) {
+  btn.disabled = true;
+  btn.classList.add("is-busy");
+  try { return await fn(); }
+  finally { btn.disabled = false; btn.classList.remove("is-busy"); }
+}
+
+function showError(errEl, e) {
+  errEl.textContent = "Ошибка: " + e.message;
+  errEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+// короткое подтверждение «сохранено» внизу экрана
+function toast(text) {
+  let t = document.getElementById("toast");
+  if (!t) {
+    t = el("div", "toast");
+    t.id = "toast";
+    t.setAttribute("role", "status");
+    document.body.appendChild(t);
+  }
+  t.innerHTML = ICON.check;
+  t.append(document.createTextNode(text));
+  t.classList.remove("show");
+  void t.offsetWidth; // перезапуск анимации, если тост уже на экране
+  t.classList.add("show");
+  clearTimeout(t.hideTimer);
+  t.hideTimer = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
 // шапка позиции: номер-бейдж + название + чипы
@@ -96,24 +148,38 @@ function itemHead(lineNo, name, chips) {
   return head;
 }
 
-// шкала «выполнено / претензия» без персональных данных (FR-D5)
-function meter(ok, issue, withPhoto) {
-  const total = ok + issue;
+// шкала «выполнено / претензия» без персональных данных (FR-D5); обновляется на месте через setMeter
+function meter(stats, withPhoto) {
   const wrap = el("div", "meter");
   const bar = el("div", "meter-bar");
-  const okS = el("span", "meter-ok");
-  const issueS = el("span", "meter-issue");
-  okS.style.width = total ? (ok / total * 100) + "%" : "0";
-  issueS.style.width = total ? (issue / total * 100) + "%" : "0";
-  bar.append(okS, issueS);
-  const cap = el("div", "meter-caption");
+  bar.append(el("span", "meter-ok"), el("span", "meter-issue"));
+  wrap.append(bar, el("div", "meter-caption"));
+  wrap.withPhoto = withPhoto;
+  setMeter(wrap, stats);
+  return wrap;
+}
+
+function setMeter(wrap, { ok, issue, issueWithPhoto }) {
+  const key = `${ok}/${issue}/${issueWithPhoto}`;
+  if (wrap.key === key) return;
+  const changed = wrap.key !== undefined;
+  wrap.key = key;
+  const total = ok + issue;
+  wrap.querySelector(".meter-ok").style.width = total ? (ok / total * 100) + "%" : "0";
+  wrap.querySelector(".meter-issue").style.width = total ? (issue / total * 100) + "%" : "0";
+  const cap = wrap.querySelector(".meter-caption");
+  cap.innerHTML = "";
   if (!total) cap.textContent = "Пока никто не отметил";
   else {
-    const left = el("span"); left.innerHTML = `<b>${issue}</b> из ${total} — есть претензия`;
-    cap.append(left, el("span", "", withPhoto !== undefined ? `с фото: ${withPhoto}` : `выполнено: ${ok}`));
+    const left = el("span");
+    left.innerHTML = `<b class="meter-num--ok">${ok}</b> выполнено · <b class="meter-num--issue">${issue}</b> с претензией`;
+    cap.append(left, el("span", "", wrap.withPhoto ? `с фото: ${issueWithPhoto}` : `всего ${total}`));
   }
-  wrap.append(bar, cap);
-  return wrap;
+  if (changed) { // подсветка: цифры изменились прямо сейчас
+    wrap.classList.remove("bump");
+    void wrap.offsetWidth;
+    wrap.classList.add("bump");
+  }
 }
 
 function actionBar(...buttons) {
@@ -129,10 +195,7 @@ function startParam() {
 
 function showMessage(app, text, isError) {
   app.innerHTML = "";
-  const p = document.createElement("p");
-  p.className = isError ? "error" : "empty-state";
-  p.textContent = text;
-  app.appendChild(p);
+  app.appendChild(el("p", isError ? "error" : "empty-state", text));
 }
 
 async function start() {
@@ -166,6 +229,30 @@ async function start() {
     return;
   }
   render();
+  setInterval(() => { if (!document.hidden) refreshAct(); }, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAct(); });
+}
+
+// Фоновый опрос: отметки других жителей приходят без перезагрузки. Карточки обновляются на месте,
+// чтобы не сбить набранный текст и прокрутку; полная перерисовка — только при смене статуса акта
+let refreshing = false;
+async function refreshAct() {
+  const act = state.act;
+  if (!act || refreshing || FINAL.includes(act.status)) return;
+  if (act.status === "RECEIVED" && act.recognition !== "PENDING") return; // не трогаем редактор карточки
+  refreshing = true;
+  try {
+    const fresh = await api(`/api/acts/${act.id}`);
+    if (state.act !== act) return;
+    if (fresh.status !== act.status || fresh.recognition !== act.recognition) {
+      state.act = fresh;
+      render();
+      return;
+    }
+    fresh.items.forEach((f) => { const it = act.items.find((i) => i.id === f.id); if (it) Object.assign(it, f); });
+    syncLive();
+  } catch (e) { /* сеть моргнула — повторим на следующем тике */ }
+  finally { refreshing = false; }
 }
 
 function shortDate(iso) { return formatDate(iso).slice(0, 5); }
@@ -208,8 +295,8 @@ function renderHeader(act) {
 function staleNote(act) {
   if (!state.me.actId || state.me.actId === act.id) return null;
   const note = el("p", "hero-note", `Это акт за ${act.period || "—"} — по дому уже есть более свежий. `);
-  const open = el("button", "", "Открыть текущий");
-  open.onclick = async () => {
+  const open = button("Открыть текущий");
+  open.onclick = () => busy(open, async () => {
     try {
       state.act = await api(`/api/acts/${state.me.actId}`);
     } catch (e) {
@@ -218,7 +305,7 @@ function staleNote(act) {
     }
     state.tab = "checklist";
     render();
-  };
+  });
   note.appendChild(open);
   return note;
 }
@@ -239,26 +326,37 @@ function ringCard(daysLeft, total, title, sub) {
   return card;
 }
 
+// карточка-итог: иконка + заголовок + пояснение (+ кнопка)
+function resultCard(kind, icon, title, text, btn) {
+  const b = el("div", `result-banner result-${kind}`);
+  const ic = el("div", "result-icon");
+  ic.innerHTML = ICON[icon];
+  const body = el("div", "result-body");
+  body.append(el("h3", "", title), el("p", "", text));
+  if (btn) body.appendChild(btn);
+  b.append(ic, body);
+  return b;
+}
+
+function backToChatButton() {
+  if (!(WA && WA.close)) return null;
+  return button("Вернуться в чат", "btn btn-secondary btn-inline", () => WA.close());
+}
+
 function resultBanner(act) {
   const texts = {
-    SIGNED: ["Акт подписан", "Подписанный экземпляр отправлен председателю в чат — он пересылает его в УК."],
-    REJECTED: ["Мотивированный отказ направлен", "УК должна оформить новый акт с учётом возражений. Спасибо за отметки!"],
-    SILENT: ["Принят молчаливым согласием", "30 дней со дня получения истекли без подписи и отказа (п. 5 Порядка)."],
+    SIGNED: ["check", "Акт подписан", "Подписанный экземпляр отправлен председателю в чат — он пересылает его в УК."],
+    REJECTED: ["cross", "Мотивированный отказ направлен", "УК должна оформить новый акт с учётом возражений. Спасибо за отметки!"],
+    SILENT: ["clock", "Принят молчаливым согласием", "30 дней со дня получения истекли без подписи и отказа (п. 5 Порядка)."],
   };
   const t = texts[act.status];
-  if (!t) return null;
-  const b = el("div", `result-banner result-${act.status}`);
-  const icon = el("div", "result-icon");
-  icon.innerHTML = act.status === "SIGNED" ? ICON.check : act.status === "REJECTED" ? ICON.cross : ICON.clock;
-  const body = el("div");
-  body.append(el("h3", "", t[0]), el("p", "", t[1]));
-  b.append(icon, body);
-  return b;
+  return t ? resultCard(act.status, ...t) : null;
 }
 
 function render() {
   const app = document.getElementById("app");
   const act = state.act;
+  live = [];
   renderHeader(act);
   app.innerHTML = "";
 
@@ -282,130 +380,101 @@ function renderChairmanTabs(app, act) {
   if (state.tab === "refusal" && !hasRefusalTab) state.tab = "checklist";
   if (!["checklist", "remarks", "refusal"].includes(state.tab)) state.tab = "checklist";
 
-  const tabs = document.createElement("div");
-  tabs.className = "tabs";
-  const checklistTab = document.createElement("button");
-  checklistTab.textContent = "Чек-лист";
-  const remarksTab = document.createElement("button");
-  remarksTab.textContent = "Замечания";
-  const issues = act.items.reduce((n, i) => n + i.stats.issue, 0);
-  if (issues) remarksTab.appendChild(el("span", "tab-count", String(issues)));
-  tabs.append(checklistTab, remarksTab);
-  let refusalTab = null;
-  if (hasRefusalTab) {
-    refusalTab = document.createElement("button");
-    refusalTab.textContent = "Отказ";
-    tabs.append(refusalTab);
+  const tabs = el("div", "tabs");
+  tabs.setAttribute("role", "tablist");
+  const defs = [["checklist", "Чек-лист"], ["remarks", "Замечания"]];
+  if (hasRefusalTab) defs.push(["refusal", "Отказ"]);
+  const buttons = defs.map(([key, title]) => {
+    const b = button(title);
+    b.setAttribute("role", "tab");
+    b.onclick = () => { state.tab = key; renderBody(); };
+    tabs.appendChild(b);
+    return [key, b];
+  });
+  const remarksTab = buttons[1][1];
+  const count = el("span", "tab-count");
+  remarksTab.appendChild(count);
+  function updateCount() {
+    const issues = act.items.reduce((n, i) => n + i.stats.issue, 0);
+    count.textContent = String(issues);
+    count.hidden = !issues;
   }
   app.appendChild(tabs);
 
-  const body = document.createElement("div");
+  const body = el("div", "tab-body");
   app.appendChild(body);
 
   function renderBody() {
-    checklistTab.classList.toggle("active", state.tab === "checklist");
-    remarksTab.classList.toggle("active", state.tab === "remarks");
-    if (refusalTab) refusalTab.classList.toggle("active", state.tab === "refusal");
+    buttons.forEach(([key, b]) => {
+      b.classList.toggle("active", state.tab === key);
+      b.setAttribute("aria-selected", String(state.tab === key));
+    });
+    live = [updateCount];
+    updateCount();
     body.innerHTML = "";
     if (state.tab === "checklist") renderChecklist(body, act);
     else if (state.tab === "remarks") renderRemarksSummary(body, act);
     else renderRefusalTab(body, act);
   }
-  checklistTab.onclick = () => { state.tab = "checklist"; renderBody(); };
-  remarksTab.onclick = () => { state.tab = "remarks"; renderBody(); };
-  if (refusalTab) refusalTab.onclick = () => { state.tab = "refusal"; renderBody(); };
   renderBody();
 }
 
 function renderRefusalTab(app, act) {
-  const loading = document.createElement("p");
-  loading.className = "loading-state";
-  loading.textContent = "Загрузка…";
-  app.appendChild(loading);
+  app.appendChild(el("p", "loading-state", "Загрузка…"));
   api(`/api/acts/${act.id}/refusal`)
     .then((dto) => { app.innerHTML = ""; renderRefusalForm(app, act, dto); })
     .catch((e) => {
       app.innerHTML = "";
       if (e.code === "no_refusal") renderRefusalEmpty(app, act);
-      else {
-        const err = document.createElement("div");
-        err.className = "error";
-        err.textContent = "Ошибка: " + e.message;
-        app.appendChild(err);
-      }
+      else app.appendChild(el("div", "error", "Ошибка: " + e.message));
     });
 }
 
 function renderRefusalEmpty(app, act) {
-  const card = document.createElement("div");
-  card.className = "card";
-  const p = document.createElement("p");
-  p.className = "hint";
-  p.textContent = "Черновик мотивированного отказа ещё не собран.";
-  const err = document.createElement("div");
-  err.className = "error";
-  const btn = document.createElement("button");
-  btn.className = "btn btn-primary";
-  btn.textContent = "Собрать черновик";
-  btn.onclick = async () => {
+  const err = el("div", "error");
+  const btn = button("Собрать черновик", "btn btn-primary btn-inline");
+  btn.onclick = () => busy(btn, async () => {
     err.textContent = "";
     try {
       const dto = await api(`/api/acts/${act.id}/refusal/draft?rebuild=false`, { method: "POST" });
       app.innerHTML = "";
       renderRefusalForm(app, act, dto);
-    } catch (e) { err.textContent = "Ошибка: " + e.message; }
-  };
-  card.append(p, btn);
-  app.append(card, err);
+    } catch (e) { showError(err, e); }
+  });
+  app.append(resultCard("DRAFT", "doc", "Черновик отказа ещё не собран",
+    "Соберём его из оспоренных позиций: факты — из замечаний жителей, основания — из справочника.", btn), err);
 }
 
 function renderRefusalForm(app, act, dto) {
-  if (dto.confirmedAt) { renderRefusalConfirmed(app, dto); return; }
+  if (dto.confirmedAt) { renderRefusalConfirmed(app); return; }
 
-  const err = document.createElement("div");
-  err.className = "error";
+  const err = el("div", "error");
   app.appendChild(err);
 
-  const placeCard = document.createElement("div");
-  placeCard.className = "card";
+  const placeCard = el("div", "card");
   const placeField = field("Место составления", dto.place);
   placeCard.appendChild(placeField.wrap);
   app.appendChild(placeCard);
 
   const objectionInputs = dto.objections.map((o) => {
-    const wrap = document.createElement("div");
-    wrap.className = "item-card";
-
+    const wrap = el("div", "item-card");
     wrap.appendChild(itemHead(o.lineNo, o.itemName, [
       [`претензий: ${o.issueCount}`, "negative"], [`фото: ${o.photoCount}`, "accent"], [`выполнено: ${o.okCount}`, "positive"],
     ]));
 
-    const factLabel = document.createElement("label");
-    factLabel.textContent = "Фактически";
-    const factArea = document.createElement("textarea");
-    factArea.value = o.fact;
-    wrap.append(factLabel, factArea);
-
-    const groundP = el("div", "ground-box");
-    groundP.appendChild(el("b", "", "Основание · из справочника"));
-    groundP.append(document.createTextNode(`${o.groundText} (${o.groundRef})`));
-    wrap.appendChild(groundP);
-
-    const demandLabel = document.createElement("label");
-    demandLabel.textContent = "Требование";
-    const demandArea = document.createElement("textarea");
-    demandArea.value = o.demand;
-    wrap.append(demandLabel, demandArea);
+    const fact = textField("Фактически", o.fact);
+    const ground = el("div", "ground-box");
+    ground.appendChild(el("b", "", "Основание · из справочника"));
+    ground.append(document.createTextNode(`${o.groundText} (${o.groundRef})`));
+    const demand = textField("Требование", o.demand);
+    wrap.append(fact.wrap, ground, demand.wrap);
 
     app.appendChild(wrap);
-    return { itemId: o.itemId, factArea, demandArea };
+    return { itemId: o.itemId, factArea: fact.input, demandArea: demand.input };
   });
 
   if (dto.noObjectionLineNos.length > 0) {
-    const p = document.createElement("p");
-    p.className = "hint";
-    p.textContent = `По позициям № ${dto.noObjectionLineNos.join(", ")} возражений не имеется.`;
-    app.appendChild(p);
+    app.appendChild(el("p", "hint", `По позициям № ${dto.noObjectionLineNos.join(", ")} возражений не имеется.`));
   }
 
   function currentEdit() {
@@ -415,64 +484,54 @@ function renderRefusalForm(app, act, dto) {
     };
   }
 
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "btn btn-secondary";
-  saveBtn.textContent = "Сохранить";
-  saveBtn.onclick = async () => {
-    err.textContent = "";
-    try {
-      const updated = await api(`/api/acts/${act.id}/refusal`, { method: "PUT", json: currentEdit() });
-      app.innerHTML = "";
-      renderRefusalForm(app, act, updated);
-    } catch (e) { err.textContent = "Ошибка: " + e.message; }
-  };
+  function rerender(updated, message) {
+    const y = window.scrollY;
+    app.innerHTML = "";
+    renderRefusalForm(app, act, updated);
+    window.scrollTo(0, y);
+    toast(message);
+  }
 
-  const rebuildBtn = document.createElement("button");
-  rebuildBtn.className = "btn btn-secondary";
-  rebuildBtn.textContent = "Пересобрать";
-  rebuildBtn.onclick = async () => {
+  const saveBtn = button("Сохранить", "btn btn-secondary");
+  saveBtn.onclick = () => busy(saveBtn, async () => {
+    err.textContent = "";
+    try { rerender(await api(`/api/acts/${act.id}/refusal`, { method: "PUT", json: currentEdit() }), "Черновик сохранён"); }
+    catch (e) { showError(err, e); }
+  });
+
+  const rebuildBtn = button("Пересобрать", "btn btn-dashed");
+  rebuildBtn.onclick = () => {
     if (!confirm("Ваши правки будут потеряны.")) return;
-    err.textContent = "";
-    try {
-      const updated = await api(`/api/acts/${act.id}/refusal/draft?rebuild=true`, { method: "POST" });
-      app.innerHTML = "";
-      renderRefusalForm(app, act, updated);
-    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+    busy(rebuildBtn, async () => {
+      err.textContent = "";
+      try { rerender(await api(`/api/acts/${act.id}/refusal/draft?rebuild=true`, { method: "POST" }), "Черновик пересобран"); }
+      catch (e) { showError(err, e); }
+    });
   };
 
-  const confirmBtn = document.createElement("button");
-  confirmBtn.className = "btn btn-primary";
-  confirmBtn.textContent = "Подтвердить и сформировать PDF";
-  confirmBtn.onclick = async () => {
+  const confirmBtn = button("Подтвердить и сформировать PDF", "btn btn-primary");
+  confirmBtn.onclick = () => {
     if (!confirm("После подтверждения текст изменить нельзя.")) return;
-    err.textContent = "";
-    try {
-      await api(`/api/acts/${act.id}/refusal`, { method: "PUT", json: currentEdit() });
-      const confirmed = await api(`/api/acts/${act.id}/refusal/confirm`, { method: "POST" });
-      app.innerHTML = "";
-      renderRefusalConfirmed(app, confirmed);
-    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+    busy(confirmBtn, async () => {
+      err.textContent = "";
+      try {
+        await api(`/api/acts/${act.id}/refusal`, { method: "PUT", json: currentEdit() });
+        await api(`/api/acts/${act.id}/refusal/confirm`, { method: "POST" });
+        app.innerHTML = "";
+        renderRefusalConfirmed(app);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (e) { showError(err, e); }
+    });
   };
 
-  rebuildBtn.className = "btn btn-dashed";
   const row = el("div", "action-row");
   row.append(saveBtn, rebuildBtn);
   app.appendChild(actionBar(confirmBtn, row));
 }
 
-function renderRefusalConfirmed(app, dto) {
-  const card = document.createElement("div");
-  card.className = "card";
-  const p = document.createElement("p");
-  p.className = "hint";
-  p.style.margin = "0 0 12px";
-  p.textContent = "Документ сформирован и отправлен вам в чат MAX. Перешлите его в УК и нажмите в чате «Отправил исполнителю».";
-  const btn = document.createElement("button");
-  btn.className = "btn btn-primary";
-  btn.textContent = "Вернуться в чат";
-  btn.onclick = () => { if (WA && WA.close) WA.close(); };
-  card.append(p, btn);
-  app.appendChild(card);
+function renderRefusalConfirmed(app) {
+  app.appendChild(resultCard("SIGNED", "check", "Отказ сформирован",
+    "PDF отправлен вам в чат MAX. Перешлите его в УК и нажмите в чате «Отправил исполнителю».", backToChatButton()));
 }
 
 function renderRemarksSummary(app, act) {
@@ -480,49 +539,58 @@ function renderRemarksSummary(app, act) {
   app.appendChild(err);
 
   const items = [...act.items].sort((a, b) => b.stats.issue - a.stats.issue);
-  items.forEach((item) => app.appendChild(renderRemarksItem(item, err)));
+  items.forEach((item) => app.appendChild(liveRemarksItem(item, err)));
 
   if (act.status === "COLLECTING") {
-    const closeBtn = el("button", "btn btn-primary", "Завершить сбор замечаний");
-    closeBtn.onclick = async () => {
+    const closeBtn = button("Завершить сбор замечаний", "btn btn-primary");
+    closeBtn.onclick = () => {
       if (!confirm("После завершения сбора жители больше не смогут отмечать позиции.")) return;
-      closeBtn.disabled = true;
-      err.textContent = "";
-      try { state.act = await api(`/api/acts/${act.id}/close-collection`, { method: "POST" }); render(); }
-      catch (e) { err.textContent = "Ошибка: " + e.message; closeBtn.disabled = false; }
+      busy(closeBtn, async () => {
+        err.textContent = "";
+        try { state.act = await api(`/api/acts/${act.id}/close-collection`, { method: "POST" }); render(); }
+        catch (e) { showError(err, e); }
+      });
     };
     app.appendChild(actionBar(closeBtn));
   }
 }
 
+// карточка замечаний пересобирается целиком, когда у позиции появились новые отметки/формулировки LLM
+function liveRemarksItem(item, err) {
+  const sig = () => JSON.stringify([item.stats, item.remarks, item.decision]);
+  let card = renderRemarksItem(item, err);
+  let last = sig();
+  live.push(() => {
+    const s = sig();
+    if (s === last) return;
+    last = s;
+    const next = renderRemarksItem(item, err);
+    next.classList.add("item-card--fresh");
+    card.replaceWith(next);
+    card = next;
+  });
+  return card;
+}
+
 function renderRemarksItem(item, err) {
-  const card = document.createElement("div");
-  card.className = "item-card";
+  const card = el("div", "item-card");
 
   card.appendChild(itemHead(item.lineNo, item.name, [item.periodicity && [item.periodicity]]));
-  card.appendChild(meter(item.stats.ok, item.stats.issue, item.stats.issueWithPhoto));
+  card.appendChild(meter(item.stats, true));
 
   (item.remarks || []).filter((r) => r.verdict === "ISSUE").forEach((r) => {
-    const box = document.createElement("div");
-    box.className = "remark-box";
-    const text = document.createElement("p");
+    const box = el("div", "remark-box");
+    const text = el("p");
     if (r.llmStatus === "PENDING") { text.className = "llm-pending"; text.textContent = "Формулируем замечание…"; }
     else {
       text.textContent = r.formalized || r.text || "";
-      if (r.llmStatus === "FAILED") {
-        const badge = document.createElement("span");
-        badge.className = "llm-badge";
-        badge.textContent = " (без обработки)";
-        text.appendChild(badge);
-      }
+      if (r.llmStatus === "FAILED") text.appendChild(el("span", "llm-badge", " (без обработки)"));
     }
     box.appendChild(text);
-    const photosDiv = document.createElement("div");
-    photosDiv.className = "photos";
-    photosDiv.style.marginBottom = "0";
+    const photosDiv = el("div", "photos photos--inset");
     (r.photos || []).forEach((p) => {
-      const img = document.createElement("img");
-      img.className = "thumb";
+      const img = el("img", "thumb");
+      img.alt = "Фото к замечанию";
       loadImage(p.url, img);
       photosDiv.appendChild(img);
     });
@@ -536,284 +604,334 @@ function renderRemarksItem(item, err) {
   decisionRow.append(acceptBtn, disputeBtn);
   card.appendChild(decisionRow);
 
-  if (item.stats.issueWithPhoto === 0) {
-    disputeBtn.disabled = true;
+  const noPhoto = item.stats.issueWithPhoto === 0;
+  if (noPhoto) {
     const note = el("div", "hint-box");
     note.innerHTML = ICON.alert;
     note.append(document.createTextNode("Нет замечаний с фото — оснований для возражения недостаточно"));
     card.appendChild(note);
   }
 
-  function refresh() {
+  function paint() {
     acceptBtn.classList.toggle("active", item.decision === "ACCEPT");
     disputeBtn.classList.toggle("active", item.decision === "DISPUTE");
+    acceptBtn.setAttribute("aria-pressed", String(item.decision === "ACCEPT"));
+    disputeBtn.setAttribute("aria-pressed", String(item.decision === "DISPUTE"));
+    disputeBtn.disabled = noPhoto;
+    card.classList.toggle("item-card--ok", item.decision === "ACCEPT");
+    card.classList.toggle("item-card--issue", item.decision === "DISPUTE");
   }
-  refresh();
+  paint();
 
-  async function setDecision(decision) {
-    err.textContent = "";
-    try {
-      const dto = await api(`/api/items/${item.id}/decision`, { method: "PUT", json: { decision } });
-      item.decision = dto.decision;
-      refresh();
-    } catch (e) { err.textContent = "Ошибка: " + e.message; }
+  function setDecision(btn, decision) {
+    if (item.decision === decision) return;
+    busy(btn, async () => {
+      err.textContent = "";
+      try { Object.assign(item, await api(`/api/items/${item.id}/decision`, { method: "PUT", json: { decision } })); }
+      catch (e) { showError(err, e); }
+    }).then(paint);
   }
-  acceptBtn.onclick = () => setDecision("ACCEPT");
-  disputeBtn.onclick = () => setDecision("DISPUTE");
+  acceptBtn.onclick = () => setDecision(acceptBtn, "ACCEPT");
+  disputeBtn.onclick = () => setDecision(disputeBtn, "DISPUTE");
 
   return card;
 }
 
 function renderChecklist(app, act) {
   const editable = act.status === "COLLECTING";
-  app.appendChild(el("p", "section-title", editable ? "Отметьте каждую работу" : "Сбор замечаний закрыт"));
+  if (act.isResident && editable) app.appendChild(progressCard(act));
+  else app.appendChild(el("p", "section-title", editable ? "Отметьте каждую работу" : "Сбор замечаний закрыт"));
   act.items.forEach((item) => app.appendChild(renderChecklistItem(item, editable)));
 }
 
+// сколько позиций житель уже отметил; когда все — показываем итог, чтобы было понятно, что всё готово
+function progressCard(act) {
+  const card = el("div", "progress-card");
+  const top = el("div", "progress-top");
+  const title = el("b");
+  const counter = el("span", "progress-count");
+  top.append(title, counter);
+  const bar = el("div", "progress-bar");
+  const fill = el("span");
+  bar.appendChild(fill);
+  const note = el("p", "progress-note");
+  card.append(top, bar, note);
+
+  function update() {
+    const total = act.items.length;
+    const done = act.items.filter((i) => i.my && i.my.verdict).length;
+    const complete = total > 0 && done === total;
+    card.classList.toggle("progress-card--done", complete);
+    title.textContent = complete ? "Все работы отмечены" : "Отметьте каждую работу";
+    counter.textContent = `${done} из ${total}`;
+    fill.style.width = total ? (done / total * 100) + "%" : "0";
+    note.textContent = complete
+      ? "Спасибо! Председатель увидит отметки сразу. Изменить их можно до закрытия сбора."
+      : "Выполнено — если работа сделана. Есть претензия — если нет или с недостатками.";
+  }
+  update();
+  live.push(update);
+  return card;
+}
+
+// Карточка позиции для жителя. Режимы: null (не отмечено) → OK | DRAFT (пишет претензию) → ISSUE (сохранена)
 function renderChecklistItem(item, editable) {
-  const card = document.createElement("div");
-  card.className = "item-card";
-
+  const card = el("div", "item-card");
   card.appendChild(itemHead(item.lineNo, item.name, [item.periodicity && [item.periodicity]]));
-  card.appendChild(meter(item.stats.ok, item.stats.issue));
-
-  const my = item.my || { verdict: null, text: null, photos: [] };
-  let photos = my.photos || [];
+  const m = meter(item.stats);
+  card.appendChild(m);
+  live.push(() => setMeter(m, item.stats));
 
   const btnRow = el("div", "segmented");
   const okBtn = iconButton("check", "Выполнено");
   const issueBtn = iconButton("alert", "Есть претензия", "negative");
   btnRow.append(okBtn, issueBtn);
-  card.appendChild(btnRow);
+  const err = el("div", "error");
+  const body = el("div", "item-body");
+  card.append(btnRow, err, body);
 
-  const err = document.createElement("div");
-  err.className = "error";
-  card.appendChild(err);
+  const saved = () => (item.my && item.my.verdict) || null;
+  let mode = saved();
+  let draft = null; // набранный, но не сохранённый текст — переживает переключения режимов
 
-  const issueBox = document.createElement("div");
-
-  const textarea = document.createElement("textarea");
-  textarea.placeholder = "Что именно не так? Например: в подъезде 2 не мыли пол с 10 сентября";
-  textarea.value = my.text || "";
-  issueBox.appendChild(textarea);
-
-  const photosDiv = el("div", "photos");
-  const fileInput = document.createElement("input");
-  fileInput.type = "file";
-  fileInput.accept = "image/*";
-  fileInput.capture = "environment";
-  fileInput.style.display = "none";
-  // плитка «+ фото» живёт внутри сетки снимков (до 5 фото на замечание)
-  const addPhotoBtn = el("button", "photo-add");
-  addPhotoBtn.innerHTML = ICON.camera;
-  addPhotoBtn.append(document.createTextNode("Фото"));
-  addPhotoBtn.onclick = () => fileInput.click();
-  function renderPhotos() {
-    photosDiv.innerHTML = "";
-    photos.forEach((p) => {
-      const img = document.createElement("img");
-      img.className = "thumb";
-      loadImage(p.url, img);
-      photosDiv.appendChild(img);
-    });
-    if (editable && photos.length < 5) photosDiv.appendChild(addPhotoBtn);
-  }
-  renderPhotos();
-  issueBox.append(photosDiv, fileInput);
-
-  const hint = el("div", "hint-box");
-  hint.innerHTML = ICON.camera;
-  hint.append(document.createTextNode("Претензия с фото — самый сильный аргумент. Без фото председатель не сможет её заявить."));
-  issueBox.appendChild(hint);
-
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "btn btn-primary";
-  saveBtn.textContent = "Сохранить";
-  issueBox.appendChild(saveBtn);
-
-  card.appendChild(issueBox);
-
-  function setVerdict(v) {
+  function paint() {
+    const v = mode === "DRAFT" ? "ISSUE" : mode;
     okBtn.classList.toggle("active", v === "OK");
     issueBtn.classList.toggle("active", v === "ISSUE");
-    issueBox.style.display = v === "ISSUE" ? "block" : "none";
+    okBtn.setAttribute("aria-pressed", String(v === "OK"));
+    issueBtn.setAttribute("aria-pressed", String(v === "ISSUE"));
+    card.classList.toggle("item-card--ok", saved() === "OK");
+    card.classList.toggle("item-card--issue", saved() === "ISSUE");
+    body.innerHTML = "";
+    if (mode === "DRAFT") body.appendChild(issueForm());
+    else if (mode === "ISSUE") body.appendChild(savedIssue());
   }
-  setVerdict(my.verdict);
+
+  function apply(dto) {
+    Object.assign(item, dto);
+    mode = saved();
+    paint();
+    syncLive();
+  }
+
+  function issueForm() {
+    const wrap = el("div", "issue-form");
+    const ta = el("textarea");
+    ta.placeholder = "Что именно не так? Например: в подъезде 2 не мыли пол с 10 сентября";
+    ta.maxLength = 1000;
+    ta.value = draft ?? (saved() === "ISSUE" ? item.my.text || "" : "");
+    const foot = el("div", "form-foot");
+    const counter = el("span", "char-count");
+    foot.append(el("span", "", "Фото добавите следующим шагом"), counter);
+
+    const cancelBtn = button("Отмена", "btn btn-secondary", () => { draft = null; mode = saved(); paint(); });
+    const saveBtn = button("Сохранить", "btn btn-primary");
+    const row = el("div", "action-row");
+    row.append(cancelBtn, saveBtn);
+
+    function sync() {
+      const len = ta.value.trim().length;
+      counter.textContent = `${ta.value.length}/1000`;
+      saveBtn.disabled = len < 3;
+    }
+    ta.oninput = () => { draft = ta.value; sync(); };
+    sync();
+
+    saveBtn.onclick = () => busy(saveBtn, async () => {
+      err.textContent = "";
+      try {
+        apply(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "ISSUE", text: ta.value } }));
+        draft = null;
+        toast("Замечание сохранено");
+      } catch (e) { showError(err, e); }
+    }).then(() => { if (saveBtn.isConnected) sync(); });
+
+    wrap.append(ta, foot, row);
+    requestAnimationFrame(() => ta.focus({ preventScroll: true }));
+    return wrap;
+  }
+
+  // сохранённая претензия: текст + фото; отсюда можно дозагрузить снимки или вернуться к редактированию
+  function savedIssue() {
+    const photos = item.my.photos || [];
+    const wrap = el("div", "saved-issue");
+    const head = el("div", "saved-head");
+    const badge = el("span", "saved-badge");
+    badge.innerHTML = ICON.check;
+    badge.append(document.createTextNode(editable ? "Замечание сохранено" : "Ваше замечание"));
+    head.appendChild(badge);
+    if (editable) {
+      const editBtn = iconButton("pen", "Изменить", "btn-link");
+      editBtn.onclick = () => { mode = "DRAFT"; paint(); };
+      head.appendChild(editBtn);
+    }
+    wrap.append(head, el("p", "saved-text", item.my.text || ""));
+
+    const grid = el("div", "photos");
+    photos.forEach((p) => {
+      const img = el("img", "thumb");
+      img.alt = "Ваше фото";
+      loadImage(p.url, img);
+      grid.appendChild(img);
+    });
+    if (editable && photos.length < 5) grid.appendChild(photoAddTile());
+    wrap.appendChild(grid);
+
+    if (editable && !photos.length) {
+      const hint = el("div", "hint-box");
+      hint.innerHTML = ICON.camera;
+      hint.append(document.createTextNode("Добавьте фото — без него председатель не сможет заявить претензию в УК."));
+      wrap.appendChild(hint);
+    }
+    return wrap;
+  }
+
+  function photoAddTile() {
+    const fileInput = el("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    fileInput.capture = "environment";
+    fileInput.hidden = true;
+    const tile = el("label", "photo-add"); // label сам открывает выбор файла — без вложенной кнопки
+    tile.innerHTML = ICON.camera;
+    tile.append(document.createTextNode("Фото"), fileInput);
+    fileInput.onchange = () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      busy(tile, async () => {
+        err.textContent = "";
+        try {
+          const form = new FormData();
+          form.append("photo", await resizeImage(file), "photo.jpg");
+          const r = await fetch(window.API_BASE + `/api/items/${item.id}/my-remark/photos`, { method: "POST", headers: authHeaders(), body: form });
+          if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
+          apply(await r.json());
+          toast("Фото добавлено");
+        } catch (e) { showError(err, e); }
+      });
+    };
+    return tile;
+  }
+
+  paint();
 
   if (!editable) {
     okBtn.disabled = true;
     issueBtn.disabled = true;
-    textarea.disabled = true;
-    saveBtn.style.display = "none";
     return card;
   }
 
-  function applyRemark(dto) {
-    my.verdict = dto.verdict;
-    my.text = dto.text;
-    photos = dto.photos;
-    textarea.value = dto.text || "";
-    setVerdict(dto.verdict);
-    renderPhotos();
-  }
-
-  okBtn.onclick = async () => {
-    err.textContent = "";
-    try { applyRemark(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "OK" } })); }
-    catch (e) { err.textContent = "Ошибка: " + e.message; }
+  okBtn.onclick = () => {
+    if (saved() === "OK") { mode = "OK"; draft = null; paint(); return; }
+    const photos = saved() === "ISSUE" ? item.my.photos.length : 0;
+    if (saved() === "ISSUE" && !confirm(photos ? "Замечание и приложенные фото будут удалены." : "Замечание будет удалено.")) return;
+    busy(okBtn, async () => {
+      err.textContent = "";
+      try { apply(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "OK" } })); draft = null; }
+      catch (e) { showError(err, e); }
+    });
   };
 
-  issueBtn.onclick = () => setVerdict("ISSUE");
-
-  async function saveText() {
-    applyRemark(await api(`/api/items/${item.id}/my-remark`, { method: "PUT", json: { verdict: "ISSUE", text: textarea.value } }));
-  }
-
-  saveBtn.onclick = async () => {
-    err.textContent = "";
-    try { await saveText(); }
-    catch (e) { err.textContent = "Ошибка: " + e.message; }
-  };
-
-  fileInput.onchange = async () => {
-    const file = fileInput.files[0];
-    fileInput.value = "";
-    if (!file) return;
-    err.textContent = "";
-    addPhotoBtn.disabled = true;
-    try {
-      await saveText(); // фото можно добавить только к уже сохранённому замечанию
-      const blob = await resizeImage(file);
-      const form = new FormData();
-      form.append("photo", blob, "photo.jpg");
-      const r = await fetch(window.API_BASE + `/api/items/${item.id}/my-remark/photos`, { method: "POST", headers: authHeaders(), body: form });
-      if (!r.ok) { const e = await r.json().catch(() => ({ message: r.statusText })); throw new Error(e.message); }
-      photos = [...photos, await r.json()];
-      renderPhotos();
-    } catch (e) { err.textContent = "Ошибка: " + e.message; }
-    addPhotoBtn.disabled = false;
+  issueBtn.onclick = () => {
+    if (mode === "DRAFT" || mode === "ISSUE") return;
+    mode = "DRAFT";
+    paint();
   };
 
   return card;
 }
 
 function field(label, value) {
-  const wrap = document.createElement("div");
-  wrap.className = "field";
-  const lbl = document.createElement("label");
-  lbl.textContent = label;
-  const input = document.createElement("input");
+  const wrap = el("div", "field");
+  const lbl = el("label", "", label);
+  const input = el("input");
   input.value = value;
-  wrap.append(lbl, input);
+  lbl.appendChild(input);
+  wrap.appendChild(lbl);
+  return { wrap, input };
+}
+
+function textField(label, value) {
+  const wrap = el("label", "", label);
+  const input = el("textarea");
+  input.value = value;
+  wrap.appendChild(input);
   return { wrap, input };
 }
 
 function renderCardEditor(app, act) {
   if (act.recognition === "PENDING") {
-    const card = document.createElement("div");
-    card.className = "card";
-    const p = document.createElement("p");
-    p.className = "hint";
-    p.style.margin = "0 0 12px";
-    p.textContent = "Акт распознаётся…";
-    const refreshBtn = document.createElement("button");
-    refreshBtn.className = "btn btn-primary";
-    refreshBtn.textContent = "Обновить";
-    refreshBtn.onclick = async () => { state.act = await api(`/api/acts/${act.id}`); render(); };
-    card.append(p, refreshBtn);
-    app.appendChild(card);
+    const refreshBtn = button("Обновить", "btn btn-secondary btn-inline");
+    refreshBtn.onclick = () => busy(refreshBtn, async () => { state.act = await api(`/api/acts/${act.id}`); render(); });
+    app.appendChild(resultCard("DRAFT", "doc", "Акт распознаётся…", "Обычно это меньше минуты. Страница обновится сама.", refreshBtn));
     return;
   }
 
-  const err = document.createElement("div");
-  err.className = "error";
+  const err = el("div", "error");
   app.appendChild(err);
 
   app.appendChild(el("p", "section-title", "Реквизиты акта"));
-  const infoCard = document.createElement("div");
-  infoCard.className = "card";
+  const infoCard = el("div", "card");
   const numberField = field("Номер", act.number || "");
-  const dateField = field("Дата оформления (ГГГГ-ММ-ДД)", act.formedDate || "");
+  const dateField = field("Дата оформления", act.formedDate || "");
+  dateField.input.type = "date";
   const periodField = field("Период", act.period || "");
   infoCard.append(numberField.wrap, dateField.wrap, periodField.wrap);
   app.append(infoCard);
 
   app.appendChild(el("p", "section-title", "Позиции акта"));
-  const itemsDiv = document.createElement("div");
+  const itemsDiv = el("div");
   app.appendChild(itemsDiv);
 
   const items = act.items.map((it) => ({
     id: it.id, name: it.name, periodicity: it.periodicity, volume: it.volume, cost: it.cost, workKind: it.workKind,
   }));
 
+  function input(item, key, placeholder) {
+    const i = el("input");
+    i.value = item[key];
+    i.placeholder = placeholder;
+    i.setAttribute("aria-label", placeholder);
+    i.oninput = () => { item[key] = i.value; };
+    return i;
+  }
+
   function renderItems() {
     itemsDiv.innerHTML = "";
     items.forEach((item, idx) => {
-      const itemCard = document.createElement("div");
-      itemCard.className = "item-card";
+      const itemCard = el("div", "item-card");
 
-      const itemHeader = el("div", "item-head");
-      itemHeader.style.alignItems = "center";
-      itemHeader.style.marginBottom = "0";
-      const itemLabel = el("div", "item-num", String(idx + 1));
-      const spacer = el("div", "item-main");
-      const delBtn = document.createElement("button");
-      delBtn.className = "btn-ghost";
-      delBtn.textContent = "Удалить";
-      delBtn.onclick = () => { items.splice(idx, 1); renderItems(); };
-      itemHeader.append(itemLabel, spacer, delBtn);
-      itemCard.appendChild(itemHeader);
+      const itemHeader = el("div", "item-head item-head--editor");
+      const delBtn = button("Удалить", "btn-ghost", () => { items.splice(idx, 1); renderItems(); });
+      itemHeader.append(el("div", "item-num", String(idx + 1)), el("div", "item-main"), delBtn);
 
-      const nameInput = document.createElement("input");
-      nameInput.value = item.name;
-      nameInput.placeholder = "Наименование";
-      nameInput.style.marginTop = "12px";
-      nameInput.oninput = () => { item.name = nameInput.value; };
-      itemCard.appendChild(nameInput);
+      const nameInput = input(item, "name", "Наименование работы");
+      nameInput.classList.add("input-name");
 
-      const row = document.createElement("div");
-      row.className = "item-row";
+      const row = el("div", "item-row");
+      row.append(input(item, "periodicity", "Периодичность"), input(item, "volume", "Ед. изм./объём"), input(item, "cost", "Стоимость, руб."));
 
-      const periodicityInput = document.createElement("input");
-      periodicityInput.value = item.periodicity;
-      periodicityInput.placeholder = "Периодичность";
-      periodicityInput.oninput = () => { item.periodicity = periodicityInput.value; };
-
-      const volumeInput = document.createElement("input");
-      volumeInput.value = item.volume;
-      volumeInput.placeholder = "Ед. изм./объём";
-      volumeInput.oninput = () => { item.volume = volumeInput.value; };
-
-      const costInput = document.createElement("input");
-      costInput.value = item.cost;
-      costInput.placeholder = "Стоимость, руб.";
-      costInput.oninput = () => { item.cost = costInput.value; };
-
-      const kindSelect = document.createElement("select");
+      const kindSelect = el("select");
+      kindSelect.setAttribute("aria-label", "Вид работ");
       act.workKinds.forEach((wk) => {
-        const opt = document.createElement("option");
+        const opt = el("option", "", wk.title);
         opt.value = wk.code;
-        opt.textContent = wk.title;
         if (wk.code === item.workKind) opt.selected = true;
         kindSelect.appendChild(opt);
       });
       kindSelect.onchange = () => { item.workKind = kindSelect.value; };
 
-      row.append(periodicityInput, volumeInput, costInput);
-      itemCard.append(row, kindSelect);
-      kindSelect.style.marginTop = "8px";
+      itemCard.append(itemHeader, nameInput, row, kindSelect);
       itemsDiv.appendChild(itemCard);
     });
   }
   renderItems();
 
-  const addBtn = document.createElement("button");
-  addBtn.className = "btn btn-dashed";
-  addBtn.textContent = "+ Добавить позицию";
-  addBtn.onclick = () => {
+  const addBtn = button("+ Добавить позицию", "btn btn-dashed", () => {
     items.push({ id: null, name: "", periodicity: "", volume: "", cost: "", workKind: "OTHER" });
     renderItems();
-  };
+    itemsDiv.lastChild.querySelector(".input-name").focus();
+  });
   app.appendChild(addBtn);
 
   function cardInput() {
@@ -832,26 +950,29 @@ function renderCardEditor(app, act) {
     state.act = await api(`/api/acts/${act.id}/card`, { method: "PUT", json: cardInput() });
   }
 
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "btn btn-secondary";
-  saveBtn.textContent = "Сохранить";
-  saveBtn.onclick = async () => {
-    try { await save(); render(); }
-    catch (e) { err.textContent = "Ошибка: " + e.message; }
-  };
-
-  const openBtn = document.createElement("button");
-  openBtn.className = "btn btn-primary";
-  openBtn.textContent = "Открыть сбор замечаний";
-  openBtn.onclick = async () => {
-    if (!confirm("После открытия позиции нельзя будет менять.")) return;
+  const saveBtn = button("Сохранить", "btn btn-secondary");
+  saveBtn.onclick = () => busy(saveBtn, async () => {
     try {
       await save();
-      state.act = await api(`/api/acts/${act.id}/open-collection`, { method: "POST" });
+      const y = window.scrollY;
       render();
-    } catch (e) {
-      err.textContent = "Ошибка: " + e.message;
-    }
+      window.scrollTo(0, y);
+      toast("Карточка акта сохранена");
+    } catch (e) { showError(err, e); }
+  });
+
+  const openBtn = button("Открыть сбор замечаний", "btn btn-primary");
+  openBtn.onclick = () => {
+    if (!confirm("После открытия позиции нельзя будет менять.")) return;
+    busy(openBtn, async () => {
+      try {
+        await save();
+        state.act = await api(`/api/acts/${act.id}/open-collection`, { method: "POST" });
+        render();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        toast("Сбор открыт — жители получили ссылку");
+      } catch (e) { showError(err, e); }
+    });
   };
   app.appendChild(actionBar(openBtn, saveBtn));
 }

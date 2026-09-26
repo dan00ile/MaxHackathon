@@ -370,7 +370,27 @@ body {
 .meter-ok { background: var(--positive); }
 .meter-issue { background: var(--negative); }
 .meter-caption { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-3); }
-.meter-caption b { color: var(--text); font-weight: 650; }
+.meter-caption b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.meter-num--ok { color: var(--positive); }
+.meter-num--issue { color: var(--negative); }
+.meter.bump .meter-caption b { display: inline-block; animation: bump 0.6s cubic-bezier(.2,.8,.2,1); }
+
+@keyframes bump {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+
+/* Отмеченная позиция: цветная кромка слева — видно с первого взгляда, что уже сделано */
+.item-card { transition: box-shadow 0.25s; }
+.item-card--ok { box-shadow: inset 4px 0 0 var(--positive), var(--shadow-card); }
+.item-card--issue { box-shadow: inset 4px 0 0 var(--negative), var(--shadow-card); }
+.item-card--fresh { animation: fresh 1.2s ease-out; }
+
+@keyframes fresh {
+  from { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+  to { background: var(--surface); }
+}
 
 .remark-box {
   padding: 12px;
@@ -419,11 +439,13 @@ label {
 
 input:not([type]),
 input[type="text"],
+input[type="date"],
 textarea,
 select {
   width: 100%;
   font: inherit;
   font-size: 15px;
+  font-weight: 400;
   color: var(--text);
   background: var(--surface-2);
   border: 1.5px solid transparent;
@@ -442,7 +464,8 @@ select {
   padding-right: 34px;
 }
 
-textarea { min-height: 84px; resize: vertical; line-height: 1.45; }
+textarea { min-height: 84px; max-height: 320px; resize: vertical; line-height: 1.45; field-sizing: content; }
+label > input:not([type="file"]), label > textarea { display: block; margin-top: 6px; }
 
 input:focus, textarea:focus, select:focus {
   outline: none;
@@ -455,6 +478,8 @@ input:disabled, textarea:disabled { opacity: 0.7; }
 
 .item-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
 .item-row input { min-width: 0; }
+.item-head--editor { align-items: center; margin-bottom: 12px; }
+.item-card > select { margin-top: 8px; }
 
 .ground-box {
   margin: 12px 0 0;
@@ -572,11 +597,18 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; }
   background: var(--surface-3);
 }
 
+.photos--inset { margin: 10px 0 0; }
+
 .photo-add {
+  position: relative;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 2px;
+  margin: 0;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
   aspect-ratio: 1;
   border-radius: var(--radius-s);
   border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, transparent);
@@ -642,6 +674,145 @@ button { font: inherit; border: 0; cursor: pointer; color: inherit; }
 }
 
 .error.empty-state { color: var(--negative); }
+
+button:focus-visible, .photo-add:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ───────────── Прогресс жителя ───────────── */
+.progress-card {
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: background-color 0.3s;
+}
+
+.progress-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.progress-top b { font-size: 15px; font-weight: 700; }
+.progress-count { font-size: 13px; font-weight: 650; color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.progress-bar { height: 8px; margin: 10px 0 8px; border-radius: var(--radius-pill); overflow: hidden; background: var(--surface-3); }
+.progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--hero-from), var(--hero-to));
+  transition: width 0.5s cubic-bezier(.2,.8,.2,1);
+}
+.progress-note { margin: 0; font-size: 13px; line-height: 1.4; color: var(--text-3); }
+.progress-card--done { background: color-mix(in srgb, var(--positive) 10%, var(--surface)); }
+.progress-card--done .progress-count { color: var(--positive); }
+.progress-card--done .progress-bar span { background: var(--positive); }
+.progress-card--done .progress-note { color: var(--text-2); }
+
+/* ───────────── Претензия: черновик и сохранённое ───────────── */
+.issue-form, .saved-issue { animation: rise 0.25s cubic-bezier(.2,.8,.2,1) both; }
+
+.form-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 2px 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.char-count { font-variant-numeric: tabular-nums; }
+
+.saved-issue {
+  padding: 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.saved-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+.saved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--positive);
+}
+.saved-badge svg { width: 16px; height: 16px; }
+
+.saved-text {
+  margin: 8px 0 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--negative);
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.saved-issue .photos { margin-bottom: 0; }
+.saved-issue .hint-box { margin: 12px 0 0; }
+
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 10px;
+  margin-right: -6px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 650;
+}
+.btn-link svg { width: 16px; height: 16px; }
+.btn-link:active { background: var(--accent-fade); }
+
+.btn-inline { width: auto; height: 42px; margin: 12px 0 0; }
+.result-body { min-width: 0; }
+.result-DRAFT .result-icon { background: var(--accent-fade); color: var(--accent); }
+
+/* ───────────── Кнопка «идёт запрос» ───────────── */
+.is-busy { position: relative; color: transparent !important; pointer-events: none; }
+.btn.is-busy, .segmented button.is-busy { opacity: 1; }
+.is-busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--spin, var(--accent));
+  border-right-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+.btn-primary.is-busy { --spin: #fff; }
+.segmented button.negative.is-busy { --spin: var(--negative); }
+
+/* ───────────── Тост ───────────── */
+.toast {
+  position: fixed;
+  left: 50%;
+  top: calc(12px + env(safe-area-inset-top));
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 11px 16px 11px 12px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 88%, transparent);
+  color: var(--bg);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  opacity: 0;
+  transform: translate(-50%, -16px);
+  transition: opacity 0.2s, transform 0.3s cubic-bezier(.2,.8,.2,1);
+  pointer-events: none;
+}
+.toast svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--positive); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

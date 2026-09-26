@@ -27,7 +27,7 @@ class RemarkService(
     private val scope: CoroutineScope,
 ) {
 
-    suspend fun saveMy(itemId: Long, userId: Long, verdict: Verdict, text: String?): MyRemarkDto {
+    suspend fun saveMy(itemId: Long, userId: Long, verdict: Verdict, text: String?) {
         if (verdict == Verdict.ISSUE && ((text?.trim()?.length ?: 0) !in 3..1000)) {
             throw ApiError(HttpStatusCode.BadRequest, "invalid_text", "Опишите замечание текстом от 3 до 1000 символов")
         }
@@ -74,8 +74,6 @@ class RemarkService(
             id to (verdict == Verdict.ISSUE && textChanged)
         }
         if (shouldFormalize) formalizeAsync(remarkId)
-        val photos = tx { photosOfTx(remarkId) }
-        return MyRemarkDto(verdict.name, trimmedText, photos)
     }
 
     fun formalizeAsync(remarkId: Long) {
