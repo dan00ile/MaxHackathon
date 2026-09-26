@@ -12,6 +12,7 @@ import com.lowagie.text.pdf.PdfWriter
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
@@ -43,6 +44,26 @@ data class RefusalPdfData(
 
 private val dateFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 private val dateTimeFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+
+private const val ORDER_318 = "приказом Минстроя России от 22.05.2026 № 318/пр"
+
+private val months = listOf(
+    "январь", "февраль", "март", "апрель", "май", "июнь",
+    "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+)
+
+// Период акта обычно записан как «август 2026» — в отказе нужны даты «с … по …».
+// Если распознать месяц не вышло, пишем период как в акте
+fun periodPhrase(period: String?): String {
+    val m = Regex("""^\s*(\p{L}+)\s+(\d{4})""").find(period ?: "")
+    val month = m?.let { months.indexOf(it.groupValues[1].lowercase()) } ?: -1
+    if (m == null || month < 0) return "за период ${period?.ifBlank { null } ?: "—"}"
+    val ym = YearMonth.of(m.groupValues[2].toInt(), month + 1)
+    return "за период с ${ym.atDay(1).format(dateFmt)} по ${ym.atEndOfMonth().format(dateFmt)}"
+}
+
+// текст из поля ввода как законченное предложение: точка в конце ровно одна
+fun sentence(text: String): String = text.trim().let { if (it.isEmpty() || it.last() in ".!?") it else "$it." }
 
 object Pdf {
     private val baseFonts = mutableMapOf<String, BaseFont>()
@@ -117,6 +138,9 @@ object Pdf {
         return out.toByteArray()
     }
 
+    // Структура — по шаблону мотивированного отказа (Шаблон_мотивированного_отказа.docx): шапка «кому/от кого»,
+    // вводный абзац по п. 4 Порядка, блок на каждую спорную позицию, просьба оформить новый акт по п. 6, подпись.
+    // Сверх шаблона — обязательные реквизиты FR-G2: способ уведомления УК, место составления, реестр фото
     fun refusal(d: RefusalPdfData): ByteArray {
         val bold = font("DejaVuSans-Bold.ttf", 14f)
         val regular = font("DejaVuSans.ttf", 11f)
@@ -127,83 +151,60 @@ object Pdf {
         val document = Document()
         PdfWriter.getInstance(document, out)
         document.open()
+        fun para(text: String, font: Font = regular, align: Int = Element.ALIGN_LEFT, before: Float = 0f) =
+            document.add(Paragraph(text, font).apply { alignment = align; spacingBefore = before })
 
-        listOf(
-            "Исполнителю: ${d.ukName}",
-            d.ukRepresentative,
-            " ",
-            "от председателя совета МКД по адресу: ${d.houseAddress}, ${d.chairmanFio}",
-        ).forEach { line ->
-            val p = Paragraph(line, regular)
-            p.alignment = Element.ALIGN_RIGHT
-            document.add(p)
-        }
-        document.add(Paragraph(" "))
+        listOf("В ${d.ukName}", d.ukRepresentative, d.exchangeMethod).forEach { para(it, align = Element.ALIGN_RIGHT) }
+        para("от председателя совета многоквартирного дома", align = Element.ALIGN_RIGHT, before = 6f)
+        para("${d.chairmanFio}, ${d.houseAddress}", align = Element.ALIGN_RIGHT)
 
-        document.add(
-            Paragraph(
-                "Мотивированный отказ от подписания акта приёмки оказанных услуг и (или) выполненных работ по " +
-                        "содержанию и текущему ремонту общего имущества в многоквартирном доме",
-                bold,
-            ),
+        para(
+            "Мотивированный отказ от подписания акта приёмки оказанных услуг (выполненных работ)",
+            bold, Element.ALIGN_CENTER, before = 18f,
         )
-        document.add(Paragraph(" "))
-        document.add(
-            Paragraph(
-                "В соответствии с п. 4 Порядка приёмки оказанных услуг и (или) выполненных работ по содержанию и " +
-                        "текущему ремонту общего имущества в многоквартирном доме, утв. приказом Минстроя России от " +
-                        "22.05.2026 № 318/пр, отказываюсь от подписания акта № ${d.actNumber ?: "без номера"} от " +
-                        "${d.formedDate?.format(dateFmt) ?: "—"} за ${d.period ?: "—"} в части следующих позиций:",
-                regular,
-            ),
+        val actDate = d.formedDate?.let { " от ${it.format(dateFmt)}" } ?: ""
+        para(
+            "В соответствии с пунктом 4 Порядка, утверждённого $ORDER_318, сообщаю об отказе от подписания " +
+                "акта приёмки оказанных услуг (выполненных работ) № ${d.actNumber ?: "без номера"}$actDate " +
+                "по содержанию и текущему ремонту общего имущества многоквартирного дома по адресу: " +
+                "${d.houseAddress}, ${periodPhrase(d.period)}.",
+            before = 12f,
         )
-        document.add(Paragraph(" "))
+        para(
+            "Отказ от подписания акта мотивирован следующими аргументированными возражениями против его содержания, " +
+                "установленными на основании опроса собственников и пользователей помещений многоквартирного дома:",
+            before = 6f,
+        )
 
-        fun labelRow(table: PdfPTable, label: String, value: String) {
-            table.addCell(PdfPCell(Paragraph(label, labelFont)))
-            table.addCell(PdfPCell(Paragraph(value, regular)))
-        }
         d.objections.forEach { o ->
-            val table = PdfPTable(2)
-            table.widthPercentage = 100f
-            table.setWidths(floatArrayOf(30f, 70f))
-            labelRow(table, "Позиция акта", "№${o.lineNo}. ${o.itemName}")
-            labelRow(table, "Фактически", o.fact)
-            labelRow(table, "Основание", "${o.groundText} (${o.groundRef})")
-            labelRow(table, "Требование", o.demand)
-            labelRow(
-                table,
-                "Отметки жителей",
-                "выполнено: ${o.okCount}, претензия: ${o.issueCount}, фото: ${o.photoCount}"
+            para("${o.lineNo}. ${o.itemName}", labelFont, before = 10f)
+            para("Указано в акте: ${sentence(o.actWording.ifBlank { "«${o.itemName}»" })}")
+            para(
+                "По данным опроса жильцов: ${o.fact.trimEnd().trimEnd('.')} (отметили выполнение — " +
+                    "${o.okCount} из ${o.okCount + o.issueCount} опрошенных).",
             )
             val appendixNos = d.photos.filter { it.lineNo == o.lineNo }.map { it.registryNo }
-            labelRow(table, "Приложения", if (appendixNos.isEmpty()) "—" else appendixNos.joinToString(", ") { "№$it" })
-            document.add(table)
-            document.add(Paragraph(" "))
+            para(
+                "Приложены фотоматериалы: " +
+                    if (appendixNos.isEmpty()) "нет." else "приложения № ${appendixNos.joinToString(", ")}.",
+            )
+            para("Возражение: ${sentence(o.demand)}")
         }
 
         if (d.noObjectionLineNos.isNotEmpty()) {
-            document.add(
-                Paragraph(
-                    "По позициям № ${d.noObjectionLineNos.joinToString(", ")} возражений не имеется.",
-                    regular
-                )
-            )
-            document.add(Paragraph(" "))
+            para("По позициям № ${d.noObjectionLineNos.joinToString(", ")} возражений не имеется.", before = 10f)
         }
-
-        document.add(Paragraph("Настоящий отказ направляется исполнителю способом: ${d.exchangeMethod}.", regular))
-        document.add(Paragraph(" "))
-        document.add(
-            Paragraph(
-                "Место составления: ${d.place}. Дата и время составления: ${
-                    d.composedAt.format(
-                        dateTimeFmt
-                    )
-                }.", regular
-            )
+        para(
+            "На основании изложенного прошу устранить указанные замечания и оформить новый акт приёмки в порядке, " +
+                "установленном пунктом 6 Порядка, утверждённого $ORDER_318.",
+            before = 10f,
         )
-        document.add(Paragraph("Председатель совета МКД ____________ /${d.chairmanFio}/", regular))
+        para("Настоящий отказ направляется исполнителю: ${d.exchangeMethod}.", before = 6f)
+
+        para("Дата: ${d.composedAt.format(dateFmt)}", before = 18f)
+        para("Место составления: ${d.place}")
+        para("Председатель совета МКД: ${d.chairmanFio}")
+        para("Подпись: _______________", before = 6f)
 
         if (d.demo) {
             document.add(Paragraph(" "))

@@ -125,7 +125,6 @@ object Grounds : LongIdTable("grounds") {
     val workKindTitle = text("work_kind_title")
     val legalRef = text("legal_ref")
     val wording = text("wording")
-    val demandTemplate = text("demand_template")       // шаблон требования, плейсхолдер {item}
 }
 
 // §6 «Мотивированный отказ». Одна запись на акт (новый круг = новый акт)
