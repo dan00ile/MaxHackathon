@@ -24,9 +24,15 @@ dependencies {
     implementation("com.github.librepdf:openpdf:1.3.43")
     implementation("ch.qos.logback:logback-classic:1.5.18")
     testImplementation(kotlin("test"))
+    testImplementation("org.testcontainers:postgresql:1.21.3")
 }
 
 kotlin { jvmToolchain(21) }
 application { mainClass.set("mkd.ApplicationKt") }
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    // Docker Engine 29 отвечает 400 на версии Docker API ниже 1.44, а docker-java внутри
+    // Testcontainers по умолчанию просит более старую — фиксируем минимально поддерживаемую
+    systemProperty("api.version", "1.44")
+}
 dependencyLocking { lockAllConfigurations() }

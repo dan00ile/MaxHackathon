@@ -27,18 +27,26 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
-@Serializable data class MaxUser(
+@Serializable
+data class MaxUser(
     @SerialName("user_id") val userId: Long,
     val name: String? = null,
     @SerialName("first_name") val firstName: String? = null,
     @SerialName("last_name") val lastName: String? = null,
-) { fun displayName() = name ?: listOfNotNull(firstName, lastName).joinToString(" ").ifBlank { "Житель" } }
+) {
+    fun displayName() = name ?: listOfNotNull(firstName, lastName).joinToString(" ").ifBlank { "Житель" }
+}
 
-@Serializable data class Recipient(@SerialName("chat_id") val chatId: Long? = null, @SerialName("user_id") val userId: Long? = null)
-@Serializable data class MessageBody(val mid: String, val text: String? = null, val attachments: List<JsonObject> = emptyList())
-@Serializable data class Message(val sender: MaxUser? = null, val recipient: Recipient, val timestamp: Long, val body: MessageBody)
-@Serializable data class Callback(@SerialName("callback_id") val callbackId: String, val payload: String? = null, val user: MaxUser)
-@Serializable data class Update(
+@Serializable
+data class Recipient(@SerialName("chat_id") val chatId: Long? = null, @SerialName("user_id") val userId: Long? = null)
+@Serializable
+data class MessageBody(val mid: String, val text: String? = null, val attachments: List<JsonObject> = emptyList())
+@Serializable
+data class Message(val sender: MaxUser? = null, val recipient: Recipient, val timestamp: Long, val body: MessageBody)
+@Serializable
+data class Callback(@SerialName("callback_id") val callbackId: String, val payload: String? = null, val user: MaxUser)
+@Serializable
+data class Update(
     @SerialName("update_type") val type: String,
     val timestamp: Long,                        // unix ms
     val message: Message? = null,               // message_created, message_callback
@@ -47,22 +55,34 @@ import kotlinx.serialization.json.JsonObject
     @SerialName("chat_id") val chatId: Long? = null,
     val payload: String? = null,                // bot_started: payload диплинка
 )
-@Serializable data class UpdateList(val updates: List<Update>, val marker: Long? = null)
-@Serializable data class Button(val type: String, val text: String, val payload: String? = null, val url: String? = null)
+
+@Serializable
+data class UpdateList(val updates: List<Update>, val marker: Long? = null)
+@Serializable
+data class Button(val type: String, val text: String, val payload: String? = null, val url: String? = null)
 
 fun cb(text: String, payload: String) = Button("callback", text, payload = payload)
 fun link(text: String, url: String) = Button("link", text, url = url)
 
-@Serializable data class UploadUrl(val url: String)
-@Serializable data class UploadToken(val token: String)
-@Serializable data class InlineKeyboardPayload(val buttons: List<List<Button>>)
-@Serializable data class Attachment(val type: String, val payload: kotlinx.serialization.json.JsonElement)
-@Serializable data class SendMessageRequest(val text: String? = null, val attachments: List<Attachment> = emptyList())
-@Serializable data class AnswerRequest(val notification: String)
+@Serializable
+data class UploadUrl(val url: String)
+@Serializable
+data class UploadToken(val token: String)
+@Serializable
+data class InlineKeyboardPayload(val buttons: List<List<Button>>)
+@Serializable
+data class Attachment(val type: String, val payload: kotlinx.serialization.json.JsonElement)
+@Serializable
+data class SendMessageRequest(val text: String? = null, val attachments: List<Attachment> = emptyList())
+@Serializable
+data class AnswerRequest(val notification: String)
 
-@Serializable data class SubscriptionDto(val url: String)
-@Serializable data class SubscriptionsResponse(val subscriptions: List<SubscriptionDto> = emptyList())
-@Serializable data class SubscribeRequest(val url: String, @SerialName("update_types") val updateTypes: List<String>)
+@Serializable
+data class SubscriptionDto(val url: String)
+@Serializable
+data class SubscriptionsResponse(val subscriptions: List<SubscriptionDto> = emptyList())
+@Serializable
+data class SubscribeRequest(val url: String, @SerialName("update_types") val updateTypes: List<String>)
 
 private val webhookUpdateTypes = listOf("message_created", "message_callback", "bot_started")
 
@@ -132,7 +152,13 @@ class MaxBotClient(private val token: String, private val base: String) {
         }
     }
 
-    suspend fun sendFile(userId: Long, bytes: ByteArray, fileName: String, text: String, buttons: List<List<Button>> = emptyList()) {
+    suspend fun sendFile(
+        userId: Long,
+        bytes: ByteArray,
+        fileName: String,
+        text: String,
+        buttons: List<List<Button>> = emptyList()
+    ) {
         val uploadUrlResp = http.post("$base/uploads") {
             header(HttpHeaders.Authorization, token)
             url { parameters.append("type", "file") }
@@ -143,7 +169,11 @@ class MaxBotClient(private val token: String, private val base: String) {
         val uploadResp = http.post(uploadUrl.url) {
             setBody(MultiPartFormDataContent(formData {
                 append("data", bytes, Headers.build {
-                    append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
+                    append(
+                        HttpHeaders.ContentDisposition,
+                        ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName)
+                            .toString()
+                    )
                     append(HttpHeaders.ContentType, mime)
                 })
             }))

@@ -21,7 +21,8 @@ object Db {
         }
         val ds = HikariDataSource(hikariConfig)
         Database.connect(ds)
-        transaction { SchemaUtils.create(*allTables) }
+        // createMissingTablesAndColumns, а не create: на уже поднятом стенде нужно доливать новые колонки
+        transaction { SchemaUtils.createMissingTablesAndColumns(*allTables) }
     }
 }
 
