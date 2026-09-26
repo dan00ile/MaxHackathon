@@ -2,16 +2,10 @@ package mkd
 
 import com.lowagie.text.pdf.PdfReader
 import com.lowagie.text.pdf.parser.PdfTextExtractor
-import io.ktor.http.HttpStatusCode
+import io.ktor.http.*
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import org.jetbrains.exposed.dao.id.EntityID
-import org.jetbrains.exposed.sql.ResultRow
-import org.jetbrains.exposed.sql.SortOrder
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.selectAll
-import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.sql.*
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -20,13 +14,16 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
-import java.util.UUID
+import java.util.*
 
-@Serializable data class RecognizedItem(
+@Serializable
+data class RecognizedItem(
     val lineNo: Int = 0, val name: String = "", val periodicity: String = "",
     val volume: String = "", val cost: String = "", val workKind: String = "OTHER",
 )
-@Serializable data class RecognizedAct(
+
+@Serializable
+data class RecognizedAct(
     val number: String = "", val formedDate: String = "", val period: String = "",
     val items: List<RecognizedItem> = emptyList(),
 )
@@ -56,20 +53,19 @@ object Deadlines {
 }
 
 class ActService(
-    private val cfg: Config, private val max: MaxBotClient, private val gigaChat: GigaChatClient, private val timers: TimerService,
+    private val cfg: Config,
+    private val max: MaxBotClient,
+    private val gigaChat: GigaChatClient,
+    private val timers: TimerService,
 ) {
 
-    suspend fun activeAct(houseId: Long): ResultRow? = tx {
-        Acts.selectAll()
-            .where { (Acts.houseId eq houseId) and (Acts.status inList listOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)) }
-            .orderBy(Acts.createdAt to SortOrder.DESC)
-            .limit(1)
-            .singleOrNull()
-    }
+    suspend fun activeAct(houseId: Long): ResultRow? = tx { activeActTx(houseId) }
 
-    // последний акт дома независимо от статуса — запасной вариант для /status, когда активного акта уже нет
+    // последний незаархивированный акт дома независимо от статуса — запасной вариант для /status,
+    // когда активного акта уже нет
     suspend fun lastAct(houseId: Long): ResultRow? = tx {
-        Acts.selectAll().where { Acts.houseId eq houseId }.orderBy(Acts.createdAt to SortOrder.DESC).limit(1).singleOrNull()
+        Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
+            .orderBy(Acts.createdAt to SortOrder.DESC).limit(1).singleOrNull()
     }
 
     suspend fun terminalEventAt(actId: Long, status: ActStatus): Instant? {
@@ -123,7 +119,11 @@ class ActService(
         val zone = cfg.zone
         val today = Instant.now().atZone(zone).toLocalDate()
         if (date.isAfter(today) || date.isBefore(today.minusDays(30))) {
-            throw ApiError(HttpStatusCode.BadRequest, "invalid_date", "Дата должна быть не позже сегодняшней и не раньше чем 30 дней назад")
+            throw ApiError(
+                HttpStatusCode.BadRequest,
+                "invalid_date",
+                "Дата должна быть не позже сегодняшней и не раньше чем 30 дней назад"
+            )
         }
         val receivedAt = date.atTime(12, 0).atZone(zone).toInstant()
         val deadline10 = Deadlines.day10(receivedAt, zone)
@@ -152,7 +152,11 @@ class ActService(
     suspend fun demoShift(actId: Long, userId: Long, days: Int) {
         if (!cfg.demoMode) throw ApiError(HttpStatusCode.Forbidden, "not_demo", "Команда доступна только в демо-режиме")
         requireChairmanOf(actId, userId)
-        if (days !in 1..40) throw ApiError(HttpStatusCode.BadRequest, "invalid_days", "Число дней должно быть от 1 до 40")
+        if (days !in 1..40) throw ApiError(
+            HttpStatusCode.BadRequest,
+            "invalid_days",
+            "Число дней должно быть от 1 до 40"
+        )
         tx {
             val act = Acts.selectAll().where { Acts.id eq actId }.single()
             val receivedAt = act[Acts.receivedAt].minus(days.toLong(), ChronoUnit.DAYS)
@@ -203,13 +207,21 @@ class ActService(
         tx {
             val status = Acts.select(Acts.status).where { Acts.id eq actId }.single()[Acts.status]
             if (status != ActStatus.COLLECTING && status != ActStatus.REVIEW) {
-                throw ApiError(HttpStatusCode.Conflict, "wrong_status", "Решение можно менять только во время сбора замечаний или на этапе решения")
+                throw ApiError(
+                    HttpStatusCode.Conflict,
+                    "wrong_status",
+                    "Решение можно менять только во время сбора замечаний или на этапе решения"
+                )
             }
             if (decision == Decision.DISPUTE) {
                 val issueWithPhoto = Remarks.selectAll().where { Remarks.itemId eq itemId }
                     .count { it[Remarks.verdict] == Verdict.ISSUE && photosOfTx(it[Remarks.id].value).isNotEmpty() }
                 if (issueWithPhoto == 0) {
-                    throw ApiError(HttpStatusCode.Conflict, "no_evidence", "По позиции нет замечаний с фото — оснований для возражения недостаточно")
+                    throw ApiError(
+                        HttpStatusCode.Conflict,
+                        "no_evidence",
+                        "По позиции нет замечаний с фото — оснований для возражения недостаточно"
+                    )
                 }
             }
             ActItems.update({ ActItems.id eq itemId }) { it[ActItems.decision] = decision }
@@ -221,15 +233,23 @@ class ActService(
         requireChairmanOf(actId, userId)
         val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
         if (act[Acts.status] != ActStatus.COLLECTING && act[Acts.status] != ActStatus.REVIEW) {
-            throw ApiError(HttpStatusCode.Conflict, "wrong_status", "Акт уже подписан, направлен отказ или принят молчаливым согласием")
+            throw ApiError(
+                HttpStatusCode.Conflict,
+                "wrong_status",
+                "Акт уже подписан, направлен отказ или принят молчаливым согласием"
+            )
         }
         if (act[Acts.status] == ActStatus.COLLECTING) closeCollection(actId, userId)
 
         val houseId = act[Acts.houseId].value
         val house = tx { Houses.selectAll().where { Houses.id eq houseId }.single() }
-        val uk = tx { ManagementCompanies.selectAll().where { ManagementCompanies.id eq house[Houses.ukId].value }.single() }
-        val chairman = tx { Chairmen.selectAll().where { (Chairmen.userId eq userId) and (Chairmen.houseId eq houseId) }.single() }
-        val items = tx { ActItems.selectAll().where { ActItems.actId eq actId }.orderBy(ActItems.lineNo to SortOrder.ASC).toList() }
+        val uk =
+            tx { ManagementCompanies.selectAll().where { ManagementCompanies.id eq house[Houses.ukId].value }.single() }
+        val chairman =
+            tx { Chairmen.selectAll().where { (Chairmen.userId eq userId) and (Chairmen.houseId eq houseId) }.single() }
+        val items = tx {
+            ActItems.selectAll().where { ActItems.actId eq actId }.orderBy(ActItems.lineNo to SortOrder.ASC).toList()
+        }
 
         val signedAt = ZonedDateTime.now(cfg.zone)
         val bytes = Pdf.signedAct(
@@ -239,7 +259,15 @@ class ActService(
                 actNumber = act[Acts.number],
                 formedDate = act[Acts.formedDate],
                 period = act[Acts.period],
-                items = items.map { ItemRow(it[ActItems.lineNo], it[ActItems.name], it[ActItems.periodicity], it[ActItems.volume], it[ActItems.cost]) },
+                items = items.map {
+                    ItemRow(
+                        it[ActItems.lineNo],
+                        it[ActItems.name],
+                        it[ActItems.periodicity],
+                        it[ActItems.volume],
+                        it[ActItems.cost]
+                    )
+                },
                 chairmanFio = chairman[Chairmen.fullName],
                 signedAt = signedAt,
                 demo = cfg.demoMode,
@@ -263,8 +291,16 @@ class ActService(
             userId, bytes, "akt-$number-podpisan.pdf",
             "Акт подписан. Перешлите этот файл в УК (${uk[ManagementCompanies.exchangeMethod]}) — это ваш подписанный экземпляр.",
         )
-        val residents = tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
-        residents.forEach { uid -> runCatching { max.sendText(uid, "Председатель подписал акт № $number без возражений.") } }
+        val residents =
+            tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
+        residents.forEach { uid ->
+            runCatching {
+                max.sendText(
+                    uid,
+                    "Председатель подписал акт № $number без возражений."
+                )
+            }
+        }
     }
 
     suspend fun recognize(actId: Long) {
@@ -308,17 +344,30 @@ class ActService(
                 }
                 logEvent(actId, "RECOGNIZED", null, "items=${r.items.size}")
             }
-            notifyChairmen(houseId, actId, "Распознано позиций: ${r.items.size}. Проверьте их и откройте сбор замечаний жителей.")
+            notifyChairmen(
+                houseId,
+                actId,
+                "Распознано позиций: ${r.items.size}. Проверьте их и откройте сбор замечаний жителей."
+            )
         }.onFailure {
             tx {
                 Acts.update({ Acts.id eq actId }) { it[recognition] = Recognition.FAILED }
                 logEvent(actId, "RECOGNITION_FAILED", null, it.message ?: "")
             }
-            notifyChairmen(houseId, actId, "Не удалось распознать акт автоматически — введите позиции вручную, это займёт пару минут.")
+            notifyChairmen(
+                houseId,
+                actId,
+                "Не удалось распознать акт автоматически — введите позиции вручную, это займёт пару минут."
+            )
         }
     }
 
-    private suspend fun recognizeFromImage(bytes: ByteArray, fileName: String, mime: String, validKinds: Set<String>): String {
+    private suspend fun recognizeFromImage(
+        bytes: ByteArray,
+        fileName: String,
+        mime: String,
+        validKinds: Set<String>
+    ): String {
         val fileId = gigaChat.uploadFile(bytes, fileName, mime)
         return gigaChat.chat(systemRecognizePrompt(validKinds), "Распознай акт на изображении.", listOf(fileId))
     }
@@ -333,7 +382,15 @@ class ActService(
     }
 }
 
-private val ACTIVE_STATUSES = setOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)
+val ACTIVE_STATUSES = listOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)
+
+// последний акт дома, который ещё в работе: активный статус и не заархивирован; вызывать только внутри tx { }
+fun activeActTx(houseId: Long): ResultRow? =
+    Acts.selectAll()
+        .where { (Acts.houseId eq houseId) and (Acts.status inList ACTIVE_STATUSES) and Acts.archivedAt.isNull() }
+        .orderBy(Acts.createdAt to SortOrder.DESC)
+        .limit(1)
+        .singleOrNull()
 
 private val statusRu = mapOf(
     ActStatus.RECEIVED to "Получен",
@@ -348,7 +405,7 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
     val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
     val status = act[Acts.status]
     val header = "Акт № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"}, $address\n" +
-        "Статус: ${statusRu[status]}"
+            "Статус: ${statusRu[status]}"
     if (status !in ACTIVE_STATUSES) {
         return if (eventAt != null) "$header\nДата: ${fmt.format(eventAt.atZone(zone).toLocalDate())}" else header
     }
@@ -357,7 +414,11 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
     val n10 = Deadlines.daysLeft(d10, now, zone)
     val n30 = Deadlines.daysLeft(d30, now, zone)
     val line10 = if (n10 < 0) {
-        "Срок по приказу истёк ${fmt.format(d10)}, но акт ещё не считается принятым — решение можно принять до ${fmt.format(d30)}."
+        "Срок по приказу истёк ${fmt.format(d10)}, но акт ещё не считается принятым — решение можно принять до ${
+            fmt.format(
+                d30
+            )
+        }."
     } else {
         "Срок по приказу (10 дней): до ${fmt.format(d10)} — осталось дней: $n10"
     }
@@ -370,7 +431,14 @@ fun statusButtons(cfg: Config, act: ResultRow, isChairman: Boolean, isResident: 
     val actId = act[Acts.id].value
     val buttons = mutableListOf<List<Button>>()
     if (status in ACTIVE_STATUSES) buttons.add(listOf(link("Открыть акт", appLink("act_$actId"))))
-    if (isChairman && status == ActStatus.COLLECTING) buttons.add(listOf(cb("Завершить сбор замечаний", "close:$actId")))
+    if (isChairman && status == ActStatus.COLLECTING) buttons.add(
+        listOf(
+            cb(
+                "Завершить сбор замечаний",
+                "close:$actId"
+            )
+        )
+    )
     if (isChairman && (status == ActStatus.COLLECTING || status == ActStatus.REVIEW)) {
         buttons.add(listOf(cb("Подписать", "sign:$actId")))
         buttons.add(listOf(cb("Сформировать отказ", "refuse:$actId")))
