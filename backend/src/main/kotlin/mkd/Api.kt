@@ -286,7 +286,8 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
         val verdict = runCatching { Verdict.valueOf(input.verdict) }.getOrElse {
             throw ApiError(HttpStatusCode.BadRequest, "invalid_verdict", "verdict должен быть OK или ISSUE")
         }
-        call.respond(remarks.saveMy(itemId, auth.userId, verdict, input.text))
+        remarks.saveMy(itemId, auth.userId, verdict, input.text)
+        call.respond(itemDto(itemId, auth.userId)) // вместе со свежей статистикой — мини-апп сразу обновит шкалу
     }
 
     post("/api/items/{itemId}/my-remark/photos") {
@@ -307,7 +308,8 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
             throw ApiError(HttpStatusCode.BadRequest, "invalid_mime", "Допустимы только JPEG и PNG")
         }
         if (data.size > 10 * 1024 * 1024) throw ApiError(HttpStatusCode.BadRequest, "too_large", "Файл больше 10 МБ")
-        call.respond(remarks.addPhoto(itemId, auth.userId, data, mimeType))
+        remarks.addPhoto(itemId, auth.userId, data, mimeType)
+        call.respond(itemDto(itemId, auth.userId))
     }
 
     get("/api/photos/{id}") {
