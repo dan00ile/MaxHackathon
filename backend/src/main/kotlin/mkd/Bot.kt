@@ -159,6 +159,7 @@ class Bot(
                 // без акта — меню новым сообщением; с актом — заменяем статус, на котором нажали кнопку
                 "status" -> if (arg == null) entryPoint(userId)
                 else edit = statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
+
                 "close" -> handleClose(userId, arg!!.toLong())
                 "sign" -> handleSignPrompt(userId, arg!!.toLong())
                 "sign_ok" -> handleSignOk(userId, arg!!.toLong())
@@ -366,7 +367,14 @@ class Bot(
         }
         var text = "Подписать акт без возражений? Оспариваемых позиций: $disputed."
         if (disputed > 0) text += "\nЗамечания жителей в документ не попадут."
-        max.sendText(userId, text, listOf(listOf(cb("Да, подписать", "sign_ok:$actId")), listOf(cb("Нет", "status:$actId"))))
+        max.sendText(
+            userId,
+            text,
+            listOf(
+                listOf(cb("Да, подписать", "sign_ok:$actId")),
+                listOf(cb("Нет", "status:$actId"))
+            )
+        )
     }
 
     private suspend fun handleSignOk(userId: Long, actId: Long) {
