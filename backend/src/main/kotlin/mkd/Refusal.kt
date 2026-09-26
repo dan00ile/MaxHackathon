@@ -11,11 +11,14 @@ import java.time.Instant
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
+// Блок спорной позиции по шаблону мотивированного отказа: «Указано в акте» (actWording),
+// «По данным опроса жильцов» (fact), «Возражение» (demand). fact и demand председатель правит в мини-аппе.
 @Serializable
 data class Objection(
     val itemId: Long, val lineNo: Int, val itemName: String,
     val fact: String, val groundRef: String, val groundText: String, val demand: String,
     val okCount: Int, val issueCount: Int, val photoCount: Int,
+    val actWording: String = "", // пусто в черновиках, собранных до шаблона, — PDF подставит название
 )
 
 @Serializable
@@ -35,9 +38,23 @@ data class DraftRemark(val verdict: Verdict, val text: String, val photoCount: I
 data class DraftItem(
     val itemId: Long, val lineNo: Int, val name: String, val workKind: String, val decision: Decision?,
     val remarks: List<DraftRemark>,
+    val periodicity: String = "", val volume: String = "", val cost: String = "",
 )
 
-data class GroundRow(val legalRef: String, val wording: String, val demandTemplate: String)
+data class GroundRow(val legalRef: String, val wording: String)
+
+// «Указано в акте»: как позиция записана у УК — название и заявленные периодичность, объём, стоимость
+fun actWording(item: DraftItem): String = listOfNotNull(
+    "«${item.name}»",
+    item.periodicity.ifBlank { null }?.let { "периодичность — $it" },
+    item.volume.ifBlank { null }?.let { "объём — $it" },
+    item.cost.ifBlank { null }?.let { "стоимость — $it руб." },
+).joinToString(", ")
+
+// «Возражение»: чем именно факт расходится с требованием — формулировка и ссылка из справочника оснований
+fun objectionText(ground: GroundRow): String =
+    "Работа не выполнена или выполнена с недостатками, тогда как " +
+        "${ground.wording.replaceFirstChar { it.lowercase() }} (${ground.legalRef})."
 
 // Возражение формируется, только если позиция оспорена и есть ISSUE-замечания с фото (FR-E5);
 // иначе позиция считается принятой без возражений (FR-G1 — частичный отказ).
@@ -57,10 +74,11 @@ fun buildDraft(items: List<DraftItem>, grounds: Map<String, GroundRow>): Refusal
             Objection(
                 itemId = item.itemId, lineNo = item.lineNo, itemName = item.name,
                 fact = fact, groundRef = ground.legalRef, groundText = ground.wording,
-                demand = ground.demandTemplate.replace("{item}", item.name),
+                demand = objectionText(ground),
                 okCount = item.remarks.count { it.verdict == Verdict.OK },
                 issueCount = item.remarks.count { it.verdict == Verdict.ISSUE },
                 photoCount = item.remarks.filter { it.verdict == Verdict.ISSUE }.sumOf { it.photoCount },
+                actWording = actWording(item),
             ),
         )
     }
@@ -154,7 +172,7 @@ class RefusalService(
             throw ApiError(
                 HttpStatusCode.BadRequest,
                 "invalid_input",
-                "Поля «Фактически» и «Требование» не могут быть пустыми"
+                "Поля «По данным опроса жильцов» и «Возражение» не могут быть пустыми"
             )
         }
         val current = AppJson.decodeFromString<RefusalDraft>(existing[Refusals.draftJson])
@@ -341,18 +359,17 @@ class RefusalService(
                 row[ActItems.name],
                 row[ActItems.workKind],
                 row[ActItems.decision],
-                draftRemarks
+                draftRemarks,
+                row[ActItems.periodicity],
+                row[ActItems.volume],
+                row[ActItems.cost],
             )
         }
     }
 
     private suspend fun groundsMap(): Map<String, GroundRow> = tx {
         Grounds.selectAll().associate {
-            it[Grounds.workKind] to GroundRow(
-                it[Grounds.legalRef],
-                it[Grounds.wording],
-                it[Grounds.demandTemplate]
-            )
+            it[Grounds.workKind] to GroundRow(it[Grounds.legalRef], it[Grounds.wording])
         }
     }
 

@@ -156,9 +156,9 @@ class Bot(
                 "approve" -> handleApprove(userId, arg!!.toLong())
                 "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
                 "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
-                // без акта — меню новым сообщением; с актом — заменяем статус, на котором нажали кнопку
-                "status" -> if (arg == null) entryPoint(userId)
-                else edit = statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
+                // меню и статусы акта сменяют друг друга в одном сообщении: status — меню, status:<id> — акт
+                "status" -> edit = if (arg == null) menuEdit(userId) ?: run { entryPoint(userId); null }
+                else statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
 
                 "close" -> handleClose(userId, arg!!.toLong())
                 "sign" -> handleSignPrompt(userId, arg!!.toLong())
@@ -172,7 +172,9 @@ class Bot(
             .onFailure { log.warn("answerCallback failed: {}", it.message) }
             .getOrDefault(false)
         // MAX не заменил сообщение (слишком старое, удалено) — статус не теряем, присылаем новым
-        if (edit != null && !answered) sendActStatus(userId, arg!!.toLong())
+        if (edit != null && !answered) {
+            if (arg == null) entryPoint(userId) else sendActStatus(userId, arg.toLong())
+        }
     }
 
     private fun userRowTx(userId: Long): Pair<Boolean, Long?>? =
@@ -458,9 +460,18 @@ class Bot(
             sendHouseChoice(userId)
             return
         }
-        val roles = rolesOf(userId)
+        max.sendMessage(userId, menuMessage(userId, houseId))
+    }
+
+    private suspend fun menuMessage(userId: Long, houseId: Long): SendMessageRequest {
         val houseActs = tx { houseActsTx(houseId) }
-        max.sendText(userId, menuText(houseActs, roles.chairman), menuButtons(houseActs))
+        return max.messageBody(menuText(houseActs, rolesOf(userId).chairman), menuButtons(houseActs))
+    }
+
+    // «‹ Все акты» из статуса акта: меню заменяет это же сообщение; null — дома нет, отвечаем как /start
+    private suspend fun menuEdit(userId: Long): SendMessageRequest? {
+        val (consented, houseId) = tx { userRowTx(userId) } ?: return null
+        return if (consented && houseId != null) menuMessage(userId, houseId) else null
     }
 }
 
