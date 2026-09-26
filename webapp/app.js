@@ -648,23 +648,28 @@ function renderRefusalForm(app, act, dto) {
   const err = el("div", "error");
   app.appendChild(err);
 
+  app.appendChild(el("p", "hint", "Черновик собран по шаблону мотивированного отказа. Проверьте по каждой позиции " +
+    "«По данным опроса жильцов» и «Возражение» — реквизиты УК, акта и дома подставятся в PDF сами."));
+
   const placeCard = el("div", "card");
   const placeField = field("Место составления", dto.place);
   placeCard.appendChild(placeField.wrap);
   app.appendChild(placeCard);
 
+  // поля карточки повторяют блок позиции в документе: указано в акте → опрос жильцов → возражение
   const objectionInputs = dto.objections.map((o) => {
     const wrap = el("div", "item-card");
     wrap.appendChild(itemHead(o.lineNo, o.itemName, [
       [`претензий: ${o.issueCount}`, "negative"], [`фото: ${o.photoCount}`, "accent"], [`выполнено: ${o.okCount}`, "positive"],
     ]));
 
-    const fact = textField("Фактически", o.fact);
-    const ground = el("div", "ground-box");
-    ground.appendChild(el("b", "", "Основание · из справочника"));
-    ground.append(document.createTextNode(`${o.groundText} (${o.groundRef})`));
-    const demand = textField("Требование", o.demand);
-    wrap.append(fact.wrap, ground, demand.wrap);
+    const inAct = el("div", "ground-box");
+    inAct.appendChild(el("b", "", "Указано в акте"));
+    inAct.append(document.createTextNode(o.actWording || `«${o.itemName}»`));
+    const fact = textField("По данным опроса жильцов", o.fact);
+    fact.wrap.appendChild(el("span", "field-note", `В документе добавится: отметили выполнение — ${o.okCount} из ${o.okCount + o.issueCount} опрошенных`));
+    const demand = textField("Возражение", o.demand);
+    wrap.append(inAct, fact.wrap, demand.wrap);
 
     app.appendChild(wrap);
     return { itemId: o.itemId, factArea: fact.input, demandArea: demand.input };
