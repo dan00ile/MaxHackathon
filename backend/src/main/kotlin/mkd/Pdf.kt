@@ -17,14 +17,22 @@ import java.time.format.DateTimeFormatter
 
 data class ItemRow(val lineNo: Int, val name: String, val periodicity: String, val volume: String, val cost: String)
 data class SignedActData(
-    val houseAddress: String, val ukName: String, val actNumber: String?, val formedDate: LocalDate?,
-    val period: String?, val items: List<ItemRow>, val chairmanFio: String, val signedAt: ZonedDateTime, val demo: Boolean,
+    val houseAddress: String,
+    val ukName: String,
+    val actNumber: String?,
+    val formedDate: LocalDate?,
+    val period: String?,
+    val items: List<ItemRow>,
+    val chairmanFio: String,
+    val signedAt: ZonedDateTime,
+    val demo: Boolean,
 )
 
 data class PhotoPage(
     val registryNo: Int, val lineNo: Int, val itemName: String, val author: String,
     val uploadedAt: ZonedDateTime, val file: File,
 )
+
 data class RefusalPdfData(
     val houseAddress: String, val ukName: String, val ukRepresentative: String, val exchangeMethod: String,
     val actNumber: String?, val formedDate: LocalDate?, val period: String?,
@@ -61,12 +69,17 @@ object Pdf {
         document.add(
             Paragraph(
                 "Экземпляр акта приёмки оказанных услуг и (или) выполненных работ по содержанию и " +
-                    "текущему ремонту общего имущества в многоквартирном доме",
+                        "текущему ремонту общего имущества в многоквартирном доме",
                 bold,
             ),
         )
         document.add(Paragraph(" "))
-        document.add(Paragraph("Акт № ${d.actNumber ?: "без номера"} от ${d.formedDate?.format(dateFmt) ?: "—"} за ${d.period ?: "—"}", regular))
+        document.add(
+            Paragraph(
+                "Акт № ${d.actNumber ?: "без номера"} от ${d.formedDate?.format(dateFmt) ?: "—"} за ${d.period ?: "—"}",
+                regular
+            )
+        )
         document.add(Paragraph("Адрес: ${d.houseAddress}", regular))
         document.add(Paragraph("Исполнитель: ${d.ukName}", regular))
         document.add(Paragraph(" "))
@@ -130,7 +143,7 @@ object Pdf {
         document.add(
             Paragraph(
                 "Мотивированный отказ от подписания акта приёмки оказанных услуг и (или) выполненных работ по " +
-                    "содержанию и текущему ремонту общего имущества в многоквартирном доме",
+                        "содержанию и текущему ремонту общего имущества в многоквартирном доме",
                 bold,
             ),
         )
@@ -138,9 +151,9 @@ object Pdf {
         document.add(
             Paragraph(
                 "В соответствии с п. 4 Порядка приёмки оказанных услуг и (или) выполненных работ по содержанию и " +
-                    "текущему ремонту общего имущества в многоквартирном доме, утв. приказом Минстроя России от " +
-                    "22.05.2026 № 318/пр, отказываюсь от подписания акта № ${d.actNumber ?: "без номера"} от " +
-                    "${d.formedDate?.format(dateFmt) ?: "—"} за ${d.period ?: "—"} в части следующих позиций:",
+                        "текущему ремонту общего имущества в многоквартирном доме, утв. приказом Минстроя России от " +
+                        "22.05.2026 № 318/пр, отказываюсь от подписания акта № ${d.actNumber ?: "без номера"} от " +
+                        "${d.formedDate?.format(dateFmt) ?: "—"} за ${d.period ?: "—"} в части следующих позиций:",
                 regular,
             ),
         )
@@ -158,7 +171,11 @@ object Pdf {
             labelRow(table, "Фактически", o.fact)
             labelRow(table, "Основание", "${o.groundText} (${o.groundRef})")
             labelRow(table, "Требование", o.demand)
-            labelRow(table, "Отметки жителей", "выполнено: ${o.okCount}, претензия: ${o.issueCount}, фото: ${o.photoCount}")
+            labelRow(
+                table,
+                "Отметки жителей",
+                "выполнено: ${o.okCount}, претензия: ${o.issueCount}, фото: ${o.photoCount}"
+            )
             val appendixNos = d.photos.filter { it.lineNo == o.lineNo }.map { it.registryNo }
             labelRow(table, "Приложения", if (appendixNos.isEmpty()) "—" else appendixNos.joinToString(", ") { "№$it" })
             document.add(table)
@@ -166,20 +183,33 @@ object Pdf {
         }
 
         if (d.noObjectionLineNos.isNotEmpty()) {
-            document.add(Paragraph("По позициям № ${d.noObjectionLineNos.joinToString(", ")} возражений не имеется.", regular))
+            document.add(
+                Paragraph(
+                    "По позициям № ${d.noObjectionLineNos.joinToString(", ")} возражений не имеется.",
+                    regular
+                )
+            )
             document.add(Paragraph(" "))
         }
 
         document.add(Paragraph("Настоящий отказ направляется исполнителю способом: ${d.exchangeMethod}.", regular))
         document.add(Paragraph(" "))
-        document.add(Paragraph("Место составления: ${d.place}. Дата и время составления: ${d.composedAt.format(dateTimeFmt)}.", regular))
+        document.add(
+            Paragraph(
+                "Место составления: ${d.place}. Дата и время составления: ${
+                    d.composedAt.format(
+                        dateTimeFmt
+                    )
+                }.", regular
+            )
+        )
         document.add(Paragraph("Председатель совета МКД ____________ /${d.chairmanFio}/", regular))
 
         if (d.demo) {
             document.add(Paragraph(" "))
             val demoNote = Paragraph(
                 "Демо-режим: документ сформирован без квалифицированной электронной подписи (Госключ не подключён). " +
-                    "Сведения об УК и справочник оснований — демонстрационные.",
+                        "Сведения об УК и справочник оснований — демонстрационные.",
                 Font(small.baseFont, small.size, Font.ITALIC),
             )
             document.add(demoNote)
@@ -191,7 +221,16 @@ object Pdf {
             document.add(Paragraph(" "))
             val registry = PdfPTable(4)
             registry.widthPercentage = 100f
-            listOf("№", "Позиция", "Автор", "Дата загрузки").forEach { registry.addCell(PdfPCell(Paragraph(it, labelFont))) }
+            listOf("№", "Позиция", "Автор", "Дата загрузки").forEach {
+                registry.addCell(
+                    PdfPCell(
+                        Paragraph(
+                            it,
+                            labelFont
+                        )
+                    )
+                )
+            }
             d.photos.forEach { p ->
                 registry.addCell(PdfPCell(Paragraph(p.registryNo.toString(), regular)))
                 registry.addCell(PdfPCell(Paragraph("№${p.lineNo}. ${p.itemName}", regular)))
@@ -205,7 +244,7 @@ object Pdf {
                 document.add(
                     Paragraph(
                         "Приложение № ${p.registryNo}. Позиция № ${p.lineNo} «${p.itemName}». " +
-                            "Автор: ${p.author}. Загружено: ${p.uploadedAt.format(dateTimeFmt)}",
+                                "Автор: ${p.author}. Загружено: ${p.uploadedAt.format(dateTimeFmt)}",
                         regular,
                     ),
                 )
