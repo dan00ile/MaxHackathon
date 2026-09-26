@@ -39,7 +39,8 @@ class StatusMessageTest {
     private fun payloads(buttons: List<List<Button>>) = buttons.flatten().mapNotNull { it.payload }
 
     // главный регресс: у жителя по завершённому акту не было ни одной кнопки, мини-апп из чата не открывался
-    @Test fun `finished act still offers the mini app link`() {
+    @Test
+    fun `finished act still offers the mini app link`() {
         listOf(ActStatus.SIGNED, ActStatus.REJECTED, ActStatus.SILENT).forEach { status ->
             val buttons = statusButtons(actRow(status), isChairman = false)
             assertEquals(
@@ -51,20 +52,23 @@ class StatusMessageTest {
         }
     }
 
-    @Test fun `chairman keeps decision buttons while collecting`() {
+    @Test
+    fun `chairman keeps decision buttons while collecting`() {
         val buttons = statusButtons(actRow(ActStatus.COLLECTING), isChairman = true)
         assertEquals(1, links(buttons).size)
         assertEquals(listOf("close:12", "sign:12", "refuse:12", "status:12"), payloads(buttons))
     }
 
     // решения по акту вне активных статусов уже приняты — кнопки председателя не возвращаем
-    @Test fun `chairman has no decision buttons on a signed act`() {
+    @Test
+    fun `chairman has no decision buttons on a signed act`() {
         val buttons = statusButtons(actRow(ActStatus.SIGNED), isChairman = true)
         assertEquals(1, links(buttons).size)
         assertEquals(listOf("status:12"), payloads(buttons))
     }
 
-    @Test fun `finished act text shows the terminal event date instead of countdowns`() {
+    @Test
+    fun `finished act text shows the terminal event date instead of countdowns`() {
         val signedAt = OffsetDateTime.of(2026, 9, 26, 9, 0, 0, 0, ZoneOffset.ofHours(3)).toInstant()
         val text = statusText(actRow(ActStatus.SIGNED), address, now, zone, signedAt)
 
@@ -74,8 +78,15 @@ class StatusMessageTest {
         assertTrue("осталось дней" !in text, "по завершённому акту обратный отсчёт не показываем")
     }
 
-    @Test fun `menu lists every act of the house`() {
-        val text = menuText(listOf(actRow(ActStatus.COLLECTING, id = 13, number = "13"), actRow(ActStatus.REJECTED)), isChairman = false)
+    @Test
+    fun `menu lists every act of the house`() {
+        val text = menuText(
+            listOf(
+                actRow(ActStatus.COLLECTING, id = 13, number = "13"),
+                actRow(ActStatus.REJECTED)
+            ),
+            isChairman = false
+        )
 
         assertContains(text, "Отслеживайте здесь проверку актов работ по вашему дому.")
         assertContains(text, "• Акт № 13 за сентябрь 2026 — Идёт сбор замечаний")
@@ -83,14 +94,20 @@ class StatusMessageTest {
     }
 
     // меню не ведёт на конкретный акт: сообщение в чате переживает акт, а список актов — всегда актуален
-    @Test fun `menu links to the house act list plus status of each active act`() {
-        val buttons = menuButtons(listOf(actRow(ActStatus.COLLECTING, id = 13, number = "13"), actRow(ActStatus.SIGNED)))
+    @Test
+    fun `menu links to the house act list plus status of each active act`() {
+        val buttons =
+            menuButtons(listOf(actRow(ActStatus.COLLECTING, id = 13, number = "13"), actRow(ActStatus.SIGNED)))
 
-        assertEquals(listOf(Button("link", "Открыть акты дома", url = "https://max.ru/mkd_test_bot?startapp=acts")), links(buttons))
+        assertEquals(
+            listOf(Button("link", "Открыть акты дома", url = "https://max.ru/mkd_test_bot?startapp=acts")),
+            links(buttons)
+        )
         assertEquals(listOf("status:13"), payloads(buttons), "по завершённому акту действий в меню нет")
     }
 
-    @Test fun `menu without acts is just the greeting`() {
+    @Test
+    fun `menu without acts is just the greeting`() {
         assertEquals(
             "Акт присылайте сюда файлом — PDF или фото. Можно несколько: каждый ведётся отдельно.",
             menuText(emptyList(), isChairman = true),
@@ -99,16 +116,19 @@ class StatusMessageTest {
     }
 
     // «Обновить статус» заменяет прежнее сообщение — без пометки времени непонятно, что оно свежее
-    @Test fun `updated note says when the status was refreshed`() {
+    @Test
+    fun `updated note says when the status was refreshed`() {
         assertEquals("\n\nОбновлено 26.09.2026 в 12:00", updatedNote(now, zone))
     }
 
-    @Test fun `status text has no updated note on its own`() {
+    @Test
+    fun `status text has no updated note on its own`() {
         assertTrue("Обновлено" !in statusText(actRow(ActStatus.COLLECTING), address, now, zone))
     }
 
     // MAX различает «показать всплывашку» и «заменить сообщение»: лишние null в теле ломают разбор
-    @Test fun `answer with a message body omits the notification field`() {
+    @Test
+    fun `answer with a message body omits the notification field`() {
         val body = AppJson.encodeToString(
             AnswerRequest.serializer(),
             AnswerRequest(message = SendMessageRequest(text = "Статус")),
@@ -119,7 +139,8 @@ class StatusMessageTest {
         assertContains(body, "Статус")
     }
 
-    @Test fun `active act text shows both deadlines`() {
+    @Test
+    fun `active act text shows both deadlines`() {
         val text = statusText(actRow(ActStatus.COLLECTING), address, now, zone)
 
         assertContains(text, "Статус: Идёт сбор замечаний")
