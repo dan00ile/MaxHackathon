@@ -230,6 +230,69 @@ body {
 }
 .hero-note button { padding: 0; background: none; font-weight: 650; text-decoration: underline; }
 
+.hero-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  margin: -4px 0 8px -8px;
+  padding: 0 12px 0 4px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+.hero-back svg { width: 18px; height: 18px; }
+.hero-back:active { background: rgb(255 255 255 / 0.24); }
+.hero-back.is-busy { --spin: #fff; }
+
+.hero-sub { margin: -4px 0 0; font-size: 14px; opacity: 0.85; }
+
+/* ───────────── Список актов дома ───────────── */
+.act-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 12px 14px 16px;
+  margin-bottom: 10px;
+  text-align: left;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: transform 0.1s;
+  animation: rise 0.35s cubic-bezier(.2,.8,.2,1) both;
+}
+.act-row:active { transform: scale(0.985); }
+.act-row--COLLECTING { box-shadow: inset 4px 0 0 var(--positive), var(--shadow-card); }
+.act-row--REVIEW { box-shadow: inset 4px 0 0 var(--warning), var(--shadow-card); }
+.act-row--RECEIVED { box-shadow: inset 4px 0 0 var(--accent), var(--shadow-card); }
+
+.act-row-main { flex: 1; min-width: 0; }
+.act-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.act-row-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.act-row-sub { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
+.act-row .item-meta { margin-top: 8px; }
+.act-row-chevron { display: grid; color: var(--text-3); }
+.act-row-chevron svg { width: 18px; height: 18px; }
+
+.act-status {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+.act-status--RECEIVED { color: var(--accent); background: var(--accent-fade); }
+.act-status--COLLECTING, .act-status--SIGNED { color: var(--positive); background: var(--positive-fade); }
+.act-status--REVIEW { color: var(--warning); background: var(--warning-fade); }
+.act-status--REJECTED { color: var(--negative); background: var(--negative-fade); }
+.act-status--SILENT { color: var(--silent); background: var(--silent-fade); }
+
 /* ───────────── Итоговый баннер ───────────── */
 .result-banner {
   display: flex;
@@ -767,6 +830,110 @@ button:focus-visible, .photo-add:focus-within { outline: 2px solid var(--accent)
 .btn-inline { width: auto; height: 42px; margin: 12px 0 0; }
 .result-body { min-width: 0; }
 .result-DRAFT .result-icon { background: var(--accent-fade); color: var(--accent); }
+
+.btn-plain { background: transparent; color: var(--text-2); box-shadow: none; }
+
+/* ───────────── Сводка решений председателя ───────────── */
+.summary-card {
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.summary-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.summary-stat { padding: 8px 10px; border-radius: var(--radius-s); background: var(--surface-2); }
+.summary-stat b { display: block; font-size: 22px; font-weight: 750; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.summary-stat span { font-size: 12px; color: var(--text-3); }
+.summary-stat--issue b { color: var(--negative); }
+.summary-stat--ok b { color: var(--positive); }
+.summary-hint { margin: 10px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
+
+/* ───────────── Скелетон распознавания ───────────── */
+.skeleton { display: grid; gap: 12px; }
+.sk-head { display: flex; gap: 12px; align-items: center; }
+.sk-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sk {
+  display: block;
+  height: 14px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.sk-num { width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0; }
+.sk-line { flex: 1; height: 16px; }
+.sk-short { width: 45%; }
+.sk-row .sk { height: 38px; border-radius: var(--radius-s); }
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ───────────── Фото: миниатюра-кнопка и полноэкранный просмотр ───────────── */
+.thumb-btn { display: block; padding: 0; border-radius: var(--radius-s); background: none; }
+.thumb-btn .thumb { display: block; }
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: calc(56px + env(safe-area-inset-top)) 12px calc(56px + env(safe-area-inset-bottom));
+  background: rgb(0 0 0 / 0.92);
+  animation: fade 0.2s ease-out;
+  touch-action: pan-y;
+}
+.viewer-img { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; user-select: none; -webkit-user-drag: none; }
+.viewer-count {
+  position: absolute;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 14px;
+  color: rgb(255 255 255 / 0.8);
+}
+.viewer-btn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+}
+.viewer-btn svg { width: 22px; height: 22px; }
+.viewer-close { top: calc(10px + env(safe-area-inset-top)); right: 12px; }
+.viewer-prev { left: 10px; top: 50%; transform: translateY(-50%); }
+.viewer-next { right: 10px; top: 50%; transform: translateY(-50%); }
+
+/* ───────────── Шторка подтверждения ───────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.45);
+  animation: fade 0.2s ease-out;
+}
+.sheet {
+  width: 100%;
+  max-width: 520px;
+  padding: 22px 16px calc(12px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  animation: sheet-up 0.3s cubic-bezier(.2,.8,.2,1);
+}
+.sheet h3 { margin: 0 4px 6px; font-size: 18px; font-weight: 700; }
+.sheet p { margin: 0 4px 18px; font-size: 14px; line-height: 1.45; color: var(--text-2); }
+.sheet .btn:last-child { margin-bottom: 0; }
+
+@keyframes fade { from { opacity: 0; } }
+@keyframes sheet-up { from { transform: translateY(100%); } }
 
 /* ───────────── Кнопка «идёт запрос» ───────────── */
 .is-busy { position: relative; color: transparent !important; pointer-events: none; }
