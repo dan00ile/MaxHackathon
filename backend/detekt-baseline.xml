@@ -1,0 +1,115 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:Api.kt$fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService, refusal: RefusalService)</ID>
+    <ID>CyclomaticComplexMethod:Bot.kt$Bot$private suspend fun onCallback(u: Update)</ID>
+    <ID>CyclomaticComplexMethod:Bot.kt$Bot$private suspend fun onMessage(u: Update)</ID>
+    <ID>CyclomaticComplexMethod:Timers.kt$TimerService$suspend fun tick(now: Instant = clock.instant())</ID>
+    <ID>LongMethod:Acts.kt$ActService$suspend fun sign(actId: Long, userId: Long)</ID>
+    <ID>LongMethod:Api.kt$fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService, refusal: RefusalService)</ID>
+    <ID>LongMethod:Application.kt$fun main()</ID>
+    <ID>LongMethod:Pdf.kt$Pdf$fun refusal(d: RefusalPdfData): ByteArray</ID>
+    <ID>LongMethod:Refusal.kt$RefusalService$suspend fun confirm(actId: Long, userId: Long): RefusalDto</ID>
+    <ID>LongMethod:ResetTest.kt$ResetTest$@BeforeTest fun setUp()</ID>
+    <ID>LongMethod:Seed.kt$Seed$fun run()</ID>
+    <ID>LongParameterList:Acts.kt$ActService$( userId: Long, houseId: Long, bytes: ByteArray, fileName: String, mime: String, receivedAt: Instant, mid: String, )</ID>
+    <ID>LoopWithTooManyJumpStatements:InitData.kt$InitData$for</ID>
+    <ID>LoopWithTooManyJumpStatements:Timers.kt$TimerService$for</ID>
+    <ID>MagicNumber:Acts.kt$ActService$12</ID>
+    <ID>MagicNumber:Acts.kt$ActService$30</ID>
+    <ID>MagicNumber:Acts.kt$ActService$40</ID>
+    <ID>MagicNumber:Acts.kt$ActService$50</ID>
+    <ID>MagicNumber:Acts.kt$Deadlines$10</ID>
+    <ID>MagicNumber:Acts.kt$Deadlines$25</ID>
+    <ID>MagicNumber:Acts.kt$Deadlines$28</ID>
+    <ID>MagicNumber:Acts.kt$Deadlines$29</ID>
+    <ID>MagicNumber:Acts.kt$Deadlines$30</ID>
+    <ID>MagicNumber:Acts.kt$Deadlines$7</ID>
+    <ID>MagicNumber:Api.kt$10</ID>
+    <ID>MagicNumber:Api.kt$1024</ID>
+    <ID>MagicNumber:Api.kt$50</ID>
+    <ID>MagicNumber:Bot.kt$Bot$3000</ID>
+    <ID>MagicNumber:Config.kt$Config.Companion$32</ID>
+    <ID>MagicNumber:Db.kt$Db$5</ID>
+    <ID>MagicNumber:GigaChatClient.kt$GigaChatClient$60</ID>
+    <ID>MagicNumber:GigaChatClient.kt$GigaChatClient$60_000</ID>
+    <ID>MagicNumber:MaxBotClient.kt$MaxBotClient$1000</ID>
+    <ID>MagicNumber:MaxBotClient.kt$MaxBotClient$45_000</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$100f</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$11f</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$120</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$14f</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$30f</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$4</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$5</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$70f</ID>
+    <ID>MagicNumber:Pdf.kt$Pdf$9f</ID>
+    <ID>MagicNumber:Remarks.kt$RemarkService$1000</ID>
+    <ID>MagicNumber:Remarks.kt$RemarkService$20_000</ID>
+    <ID>MagicNumber:Remarks.kt$RemarkService$3</ID>
+    <ID>MagicNumber:Remarks.kt$RemarkService$5</ID>
+    <ID>MagicNumber:Tables.kt$ActItems$16</ID>
+    <ID>MagicNumber:Tables.kt$ActItems$32</ID>
+    <ID>MagicNumber:Tables.kt$Acts$16</ID>
+    <ID>MagicNumber:Tables.kt$Events$48</ID>
+    <ID>MagicNumber:Tables.kt$Grounds$32</ID>
+    <ID>MagicNumber:Tables.kt$ManagementCompanies$12</ID>
+    <ID>MagicNumber:Tables.kt$Remarks$16</ID>
+    <ID>MagicNumber:Tables.kt$Remarks$8</ID>
+    <ID>MagicNumber:Timers.kt$TimerService$60_000</ID>
+    <ID>MatchingDeclarationName:Reset.kt$ResetResult</ID>
+    <ID>MaxLineLength:Acts.kt$ActService$"Акт подписан. Перешлите этот файл в УК (${uk[ManagementCompanies.exchangeMethod]}) — это ваш подписанный экземпляр."</ID>
+    <ID>MaxLineLength:Application.kt$log.info("Webhook держит сервер — события MAX сюда не придут; подавайте их curl'ом на /webhook/max/{secret}")</ID>
+    <ID>MaxLineLength:Refusal.kt$RefusalService$"Время отправки зафиксировано: ${dateTimeFmt.format(sentAt)}. Акт в статусе «Отказ направлен, ожидается новый акт». "</ID>
+    <ID>MaxLineLength:Refusal.kt$RefusalService$"Мотивированный отказ готов. Перешлите файл в УК (${uk[ManagementCompanies.exchangeMethod]}) и нажмите кнопку ниже — мы зафиксируем время отправки."</ID>
+    <ID>MaxLineLength:Refusal.kt$RefusalService$"Председатель направил в УК мотивированный отказ по акту № $number (оспорено позиций: $objectionsCount). Спасибо за ваши отметки!"</ID>
+    <ID>MaxLineLength:RefusalDraftTest.kt$RefusalDraftTest$val items = listOf(DraftItem(2, 2, "Двор", "YARD", Decision.DISPUTE, listOf(DraftRemark(Verdict.ISSUE, "Мусор", 0))))</ID>
+    <ID>MaxLineLength:RefusalDraftTest.kt$RefusalDraftTest$val items = listOf(DraftItem(4, 4, "Прочее", "NOPE", Decision.DISPUTE, listOf(DraftRemark(Verdict.ISSUE, "Проблема", 1))))</ID>
+    <ID>MaxLineLength:Remarks.kt$RemarkService$"Позиция акта: «${item[ActItems.name]}» (${item[ActItems.periodicity]}).\nЗамечание жителя: $originalText"</ID>
+    <ID>MaxLineLength:Remarks.kt$RemarkService$(Remarks.itemId eq itemId) and (Remarks.verdict eq Verdict.ISSUE) and (Remarks.llmStatus neq LlmStatus.DONE)</ID>
+    <ID>MaxLineLength:Seed.kt$Seed$"Договор управления МКД; п. 23 Минимального перечня услуг и работ, утв. постановлением Правительства РФ от 03.04.2013 № 290"</ID>
+    <ID>MaxLineLength:Seed.kt$Seed$"Работы по содержанию мест накопления твёрдых коммунальных отходов выполняются в соответствии с установленными требованиями"</ID>
+    <ID>MaxLineLength:Seed.kt$Seed$"Работы по содержанию помещений общего имущества, включая уборку, выполняются с периодичностью, установленной договором управления"</ID>
+    <ID>MaxLineLength:Seed.kt$Seed$"Работы по содержанию придомовой территории в холодный и тёплый период года выполняются с установленной периодичностью"</ID>
+    <ID>MaxLineLength:Seed.kt$Seed$"Работы по содержанию систем водоснабжения, отопления и водоотведения выполняются в объёме, предусмотренном договором"</ID>
+    <ID>MaxLineLength:Seed.kt$Seed$"Услуги и работы по содержанию и ремонту общего имущества оказываются в объёме и с качеством, предусмотренными договором управления"</ID>
+    <ID>MaxLineLength:Timers.kt$TimerService$" Подписать или отказать ещё можно до $d30; после этого акт будет считаться подписанным без ваших возражений."</ID>
+    <ID>MaxLineLength:Timers.kt$TimerService$"${act[Acts.period] ?: "—"} считается подписанным (молчаливое согласие, п. 5 Порядка, приказ Минстроя № 318/пр)."</ID>
+    <ID>MaxLineLength:Timers.kt$TimerService$"NOTIFY_D10"</ID>
+    <ID>MaxLineLength:Timers.kt$TimerService$"NOTIFY_D29" -&gt; "Внимание: последний день для решения — $d30 (осталось дней: $n30). Если ничего не сделать, акт будет считаться подписанным."</ID>
+    <ID>MaxLineLength:Timers.kt$TimerService$"Срок 30 дней истёк ${fmt.format(act[Acts.deadline30])}. Акт № ${act[Acts.number] ?: "без номера"} за "</ID>
+    <ID>ReturnCount:Bot.kt$Bot$private suspend fun handleShift(userId: Long, text: String)</ID>
+    <ID>ReturnCount:Bot.kt$Bot$private suspend fun onMessage(u: Update)</ID>
+    <ID>ReturnCount:InitData.kt$InitData$fun validate(raw: String, botToken: String, now: Instant = Instant.now(), maxAgeSec: Long = 86_400): Result?</ID>
+    <ID>SpreadOperator:Db.kt$Db$(*allTables)</ID>
+    <ID>ThrowsCount:Api.kt$fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkService, refusal: RefusalService)</ID>
+    <ID>ThrowsCount:Refusal.kt$RefusalService$suspend fun draft(actId: Long, userId: Long, rebuild: Boolean): RefusalDto</ID>
+    <ID>ThrowsCount:Refusal.kt$RefusalService$suspend fun edit(actId: Long, userId: Long, editInput: RefusalEdit): RefusalDto</ID>
+    <ID>ThrowsCount:Refusal.kt$RefusalService$suspend fun markSent(actId: Long, userId: Long)</ID>
+    <ID>TooGenericExceptionCaught:Bot.kt$Bot$e: Exception</ID>
+    <ID>TooManyFunctions:Acts.kt$ActService</ID>
+    <ID>TooManyFunctions:Bot.kt$Bot</ID>
+    <ID>TooManyFunctions:MaxBotClient.kt$MaxBotClient</ID>
+    <ID>UnusedPrivateMember:MaxBotClient.kt$MaxBotClient$private suspend fun HttpResponse.checkOk(): HttpResponse</ID>
+    <ID>WildcardImport:ActVisibilityTest.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:ActVisibilityTest.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:Acts.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:Acts.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.http.content.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.server.request.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:Api.kt$import io.ktor.utils.io.*</ID>
+    <ID>WildcardImport:Api.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:Bot.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:Refusal.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:Refusal.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:Remarks.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:Remarks.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:Reset.kt$import org.jetbrains.exposed.sql.*</ID>
+    <ID>WildcardImport:ResetTest.kt$import org.jetbrains.exposed.sql.*</ID>
+  </CurrentIssues>
+</SmellBaseline>
