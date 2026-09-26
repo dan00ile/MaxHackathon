@@ -294,9 +294,9 @@ class Bot(
             max.sendText(userId, "Сначала выберите дом.")
             return
         }
-        val act = acts.activeAct(houseId) ?: acts.lastAct(houseId)
+        val act = acts.currentAct(houseId)
         if (act == null) {
-            max.sendText(userId, "Активного акта нет.")
+            max.sendText(userId, "По вашему дому пока нет актов.")
             return
         }
         sendStatus(userId, houseId, act)
@@ -307,7 +307,7 @@ class Bot(
         val roles = rolesOf(userId)
         val eventAt = acts.terminalEventAt(act[Acts.id].value, act[Acts.status])
         val text = statusText(act, address, Instant.now(), cfg.zone, eventAt)
-        max.sendText(userId, text, statusButtons(cfg, act, roles.chairman, roles.resident))
+        max.sendText(userId, text, statusButtons(act, roles.chairman))
     }
 
     private suspend fun handleRcvOther(userId: Long, actId: Long) {
@@ -432,19 +432,18 @@ class Bot(
             return
         }
         val roles = rolesOf(userId)
-        val activeActId = activeActIdOf(houseId)
-        if (roles.chairman) {
-            val buttons = mutableListOf(listOf(cb("Статус акта", "status")))
-            if (activeActId != null) buttons.add(listOf(link("Открыть акт", appLink("act_$activeActId"))))
-            max.sendText(userId, "Чтобы начать, пришлите сюда файл акта (PDF или фото).", buttons)
-        } else {
-            val buttons = mutableListOf(listOf(cb("Статус акта", "status")))
-            val collecting = activeActId != null &&
-                    tx {
-                        Acts.select(Acts.status).where { Acts.id eq activeActId }.single()[Acts.status]
-                    } == ActStatus.COLLECTING
-            if (collecting) buttons.add(listOf(link("Отметить работы", appLink("act_$activeActId"))))
-            max.sendText(userId, "Отслеживайте здесь проверку акта работ по вашему дому.", buttons)
+        val act = acts.currentAct(houseId)
+        val buttons = mutableListOf(listOf(cb("Статус акта", "status")))
+        if (act != null) {
+            val collecting = !roles.chairman && act[Acts.status] == ActStatus.COLLECTING
+            val label = if (collecting) "Отметить работы" else "Открыть акт"
+            buttons.add(listOf(link(label, appLink("act_${act[Acts.id].value}"))))
         }
+        max.sendText(
+            userId,
+            if (roles.chairman) "Чтобы начать, пришлите сюда файл акта (PDF или фото)."
+            else "Отслеживайте здесь проверку акта работ по вашему дому.",
+            buttons,
+        )
     }
 }

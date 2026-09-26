@@ -61,12 +61,7 @@ class ActService(
 
     suspend fun activeAct(houseId: Long): ResultRow? = tx { activeActTx(houseId) }
 
-    // последний незаархивированный акт дома независимо от статуса — запасной вариант для /status,
-    // когда активного акта уже нет
-    suspend fun lastAct(houseId: Long): ResultRow? = tx {
-        Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
-            .orderBy(Acts.createdAt to SortOrder.DESC).limit(1).singleOrNull()
-    }
+    suspend fun currentAct(houseId: Long): ResultRow? = tx { currentActTx(houseId) }
 
     suspend fun terminalEventAt(actId: Long, status: ActStatus): Instant? {
         val type = when (status) {
@@ -141,6 +136,9 @@ class ActService(
     suspend fun requireChairmanOf(actId: Long, userId: Long): ResultRow = tx {
         val act = Acts.selectAll().where { Acts.id eq actId }.singleOrNull()
             ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Акт не найден")
+        if (act[Acts.archivedAt] != null) {
+            throw ApiError(HttpStatusCode.NotFound, "not_found", "Акт не найден")
+        }
         val houseId = act[Acts.houseId].value
         val confirmed = Chairmen.selectAll()
             .where { (Chairmen.userId eq userId) and (Chairmen.houseId eq houseId) }
@@ -173,6 +171,9 @@ class ActService(
     suspend fun requireMemberOf(actId: Long, userId: Long): ResultRow = tx {
         val act = Acts.selectAll().where { Acts.id eq actId }.singleOrNull()
             ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Акт не найден")
+        if (act[Acts.archivedAt] != null) {
+            throw ApiError(HttpStatusCode.NotFound, "not_found", "Акт не найден")
+        }
         val houseId = act[Acts.houseId].value
         val user = Users.selectAll().where { Users.id eq userId }.singleOrNull()
         if (user == null || user[Users.houseId]?.value != houseId) {
@@ -392,6 +393,17 @@ fun activeActTx(houseId: Long): ResultRow? =
         .limit(1)
         .singleOrNull()
 
+// последний незаархивированный акт дома независимо от статуса; вызывать только внутри tx { }
+fun lastActTx(houseId: Long): ResultRow? =
+    Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
+        .orderBy(Acts.createdAt to SortOrder.DESC)
+        .limit(1)
+        .singleOrNull()
+
+// акт, который показываем пользователю в боте и в мини-аппе: активный, иначе последний завершённый.
+// Один источник правды: иначе бот отдаёт статус подписанного акта, а мини-апп пишет «активного акта нет»
+fun currentActTx(houseId: Long): ResultRow? = activeActTx(houseId) ?: lastActTx(houseId)
+
 private val statusRu = mapOf(
     ActStatus.RECEIVED to "Получен",
     ActStatus.COLLECTING to "Идёт сбор замечаний",
@@ -426,11 +438,12 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
     return "$header\n$line10\n$line30"
 }
 
-fun statusButtons(cfg: Config, act: ResultRow, isChairman: Boolean, isResident: Boolean): List<List<Button>> {
+fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
     val status = act[Acts.status]
     val actId = act[Acts.id].value
     val buttons = mutableListOf<List<Button>>()
-    if (status in ACTIVE_STATUSES) buttons.add(listOf(link("Открыть акт", appLink("act_$actId"))))
+    // ссылка есть при любом статусе: мини-апп умеет показывать и завершённый акт (итоговый баннер)
+    buttons.add(listOf(link("Открыть акт", appLink("act_$actId"))))
     if (isChairman && status == ActStatus.COLLECTING) buttons.add(
         listOf(
             cb(

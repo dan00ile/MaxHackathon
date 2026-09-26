@@ -910,7 +910,7 @@ GET /api/me
     val houseId: Long?, val houseAddress: String?,
     val roles: List<String>,          // подмножество ["RESIDENT","CHAIRMAN"]
     val chairmanPending: Boolean,     // заявка председателя ждёт подтверждения
-    val activeActId: Long?,           // последний акт дома в статусе RECEIVED/COLLECTING/REVIEW
+    val actId: Long?,                 // акт дома, который показываем: активный, иначе последний завершённый
     val startParam: String?,
 )
 ```
@@ -1340,7 +1340,7 @@ POST /api/acts/{id}/open-collection    председатель     → ActDto
 Мини-апп:
 - Какой акт открыть: `start_param` вида `act_{id}` или `refusal_{id}`
   (`WA.initDataUnsafe.start_param`, при отладке — `?startapp=act_1`);
-  если нет — `me.activeActId`; если и его нет — текст «Активного акта нет».
+  если нет — `me.actId`; если и его нет — текст «По вашему дому пока нет актов».
   Незарегистрированному (`me.registered=false`) — «Сначала напишите боту
   /start».
 - Шапка (`#header`): адрес дома, «Акт № … за …», статус по-русски
