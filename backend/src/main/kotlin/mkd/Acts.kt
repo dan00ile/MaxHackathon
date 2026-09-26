@@ -438,6 +438,20 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
     return "$header\n$line10\n$line30"
 }
 
+// Приветствие/меню: если по дому есть акт, сразу показываем его статус. Иначе в меню висела бы
+// ссылка «Открыть акт» без указания, какой именно акт откроется, — она бы осталась в чате и после
+// того, как дом перешёл к следующему акту (ссылка-диплинк держит id навсегда)
+fun menuText(
+    act: ResultRow?, address: String, isChairman: Boolean,
+    now: Instant, zone: ZoneId, eventAt: Instant? = null,
+): String {
+    val head =
+        if (isChairman) "Акт присылайте сюда файлом — PDF или фото."
+        else "Отслеживайте здесь проверку акта работ по вашему дому."
+    if (act == null) return head
+    return head + "\n\n" + statusText(act, address, now, zone, eventAt)
+}
+
 fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
     val status = act[Acts.status]
     val actId = act[Acts.id].value
@@ -456,6 +470,7 @@ fun statusButtons(act: ResultRow, isChairman: Boolean): List<List<Button>> {
         buttons.add(listOf(cb("Подписать", "sign:$actId")))
         buttons.add(listOf(cb("Сформировать отказ", "refuse:$actId")))
     }
+    buttons.add(listOf(cb("Обновить статус", "status")))
     return buttons
 }
 

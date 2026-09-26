@@ -123,7 +123,7 @@ class TimerService(
             if (!includeResidents) chairmen
             else (chairmen + Users.selectAll().where { Users.houseId eq houseId }.map { it[Users.id] }).distinct()
         }
-        val buttons = listOf(listOf(link("Открыть акт", appLink("act_$actId"))), listOf(cb("Статус", "status")))
+        val buttons = listOf(listOf(link("Открыть акт", appLink("act_$actId"))))
         var success = false
         recipients.forEach { uid ->
             runCatching { max.sendText(uid, text, buttons) }.onSuccess { success = true }

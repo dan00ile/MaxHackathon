@@ -302,8 +302,11 @@ class Bot(
         sendStatus(userId, houseId, act)
     }
 
+    private suspend fun houseAddress(houseId: Long): String =
+        tx { Houses.select(Houses.address).where { Houses.id eq houseId }.single()[Houses.address] }
+
     private suspend fun sendStatus(userId: Long, houseId: Long, act: ResultRow) {
-        val address = tx { Houses.select(Houses.address).where { Houses.id eq houseId }.single()[Houses.address] }
+        val address = houseAddress(houseId)
         val roles = rolesOf(userId)
         val eventAt = acts.terminalEventAt(act[Acts.id].value, act[Acts.status])
         val text = statusText(act, address, Instant.now(), cfg.zone, eventAt)
@@ -433,17 +436,13 @@ class Bot(
         }
         val roles = rolesOf(userId)
         val act = acts.currentAct(houseId)
-        val buttons = mutableListOf(listOf(cb("Статус акта", "status")))
-        if (act != null) {
-            val collecting = !roles.chairman && act[Acts.status] == ActStatus.COLLECTING
-            val label = if (collecting) "Отметить работы" else "Открыть акт"
-            buttons.add(listOf(link(label, appLink("act_${act[Acts.id].value}"))))
-        }
+        // адрес и дата события нужны только внутри статуса — без акта в БД не ходим
+        val address = if (act == null) "" else houseAddress(houseId)
+        val eventAt = act?.let { acts.terminalEventAt(it[Acts.id].value, it[Acts.status]) }
         max.sendText(
             userId,
-            if (roles.chairman) "Чтобы начать, пришлите сюда файл акта (PDF или фото)."
-            else "Отслеживайте здесь проверку акта работ по вашему дому.",
-            buttons,
+            menuText(act, address, roles.chairman, Instant.now(), cfg.zone, eventAt),
+            if (act == null) emptyList() else statusButtons(act, roles.chairman),
         )
     }
 }
