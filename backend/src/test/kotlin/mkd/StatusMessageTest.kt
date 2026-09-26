@@ -77,7 +77,8 @@ class StatusMessageTest {
     // приветствие без статуса означало бы «Открыть акт» без указания, какой акт откроется:
     // такое сообщение переживает акт и потом ведёт на прошлый
     @Test fun `menu text carries the act it links to`() {
-        val text = menuText(actRow(ActStatus.REJECTED), address, isChairman = false, now = now, zone = zone)
+        val status = statusText(actRow(ActStatus.REJECTED), address, now, zone)
+        val text = menuText(status, isChairman = false)
 
         assertContains(text, "Отслеживайте здесь проверку акта работ по вашему дому.")
         assertContains(text, "Акт № 12 за сентябрь 2026")
@@ -85,14 +86,29 @@ class StatusMessageTest {
     }
 
     @Test fun `menu text without an act is just the greeting`() {
-        assertEquals(
-            "Акт присылайте сюда файлом — PDF или фото.",
-            menuText(null, address, isChairman = true, now = now, zone = zone),
+        assertEquals("Акт присылайте сюда файлом — PDF или фото.", menuText(null, isChairman = true))
+        assertEquals("Отслеживайте здесь проверку акта работ по вашему дому.", menuText(null, isChairman = false))
+    }
+
+    // «Обновить статус» заменяет прежнее сообщение — без пометки времени непонятно, что оно свежее
+    @Test fun `updated note says when the status was refreshed`() {
+        assertEquals("\n\nОбновлено 26.09.2026 в 12:00", updatedNote(now, zone))
+    }
+
+    @Test fun `status text has no updated note on its own`() {
+        assertTrue("Обновлено" !in statusText(actRow(ActStatus.COLLECTING), address, now, zone))
+    }
+
+    // MAX различает «показать всплывашку» и «заменить сообщение»: лишние null в теле ломают разбор
+    @Test fun `answer with a message body omits the notification field`() {
+        val body = AppJson.encodeToString(
+            AnswerRequest.serializer(),
+            AnswerRequest(message = SendMessageRequest(text = "Статус")),
         )
-        assertEquals(
-            "Отслеживайте здесь проверку акта работ по вашему дому.",
-            menuText(null, address, isChairman = false, now = now, zone = zone),
-        )
+
+        assertTrue("notification" !in body, body)
+        assertContains(body, "\"message\"")
+        assertContains(body, "Статус")
     }
 
     @Test fun `active act text shows both deadlines`() {
