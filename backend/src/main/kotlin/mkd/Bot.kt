@@ -154,6 +154,7 @@ class Bot(
         val callback = u.callback ?: return
         val userId = callback.user.userId
         val (cmd, arg) = (callback.payload ?: "").split(":", limit = 2).let { it[0] to it.getOrNull(1) }
+        var edit: SendMessageRequest? = null
         runCatching {
             when (cmd) {
                 "consent" -> handleConsent(userId, callback.user.displayName())
@@ -163,7 +164,7 @@ class Bot(
                 "approve" -> handleApprove(userId, arg!!.toLong())
                 "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
                 "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
-                "status" -> sendActiveStatus(userId)
+                "status" -> edit = statusEdit(userId) ?: run { sendActiveStatus(userId); null }
                 "close" -> handleClose(userId, arg!!.toLong())
                 "sign" -> handleSignPrompt(userId, arg!!.toLong())
                 "sign_ok" -> handleSignOk(userId, arg!!.toLong())
@@ -172,8 +173,11 @@ class Bot(
                 "reset_ok" -> handleResetOk(userId)
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
-        runCatching { max.answerCallback(callback.callbackId, "ок") }
+        val answered = runCatching { max.answerCallback(callback.callbackId, if (edit == null) "ок" else null, edit) }
             .onFailure { log.warn("answerCallback failed: {}", it.message) }
+            .getOrDefault(false)
+        // MAX не заменил сообщение (слишком старое, удалено) — статус не теряем, присылаем новым
+        if (edit != null && !answered) sendActiveStatus(userId)
     }
 
     private fun userRowTx(userId: Long): Pair<Boolean, Long?>? =
@@ -306,11 +310,27 @@ class Bot(
         tx { Houses.select(Houses.address).where { Houses.id eq houseId }.single()[Houses.address] }
 
     private suspend fun sendStatus(userId: Long, houseId: Long, act: ResultRow) {
-        val address = houseAddress(houseId)
-        val roles = rolesOf(userId)
+        max.sendMessage(userId, statusMessage(userId, houseId, act))
+    }
+
+    // updatedAt != null — статус заменяет собой прежнее сообщение, поэтому помечаем время
+    private suspend fun actStatusText(houseId: Long, act: ResultRow, updatedAt: Instant? = null): String {
         val eventAt = acts.terminalEventAt(act[Acts.id].value, act[Acts.status])
-        val text = statusText(act, address, Instant.now(), cfg.zone, eventAt)
-        max.sendText(userId, text, statusButtons(act, roles.chairman))
+        return statusText(act, houseAddress(houseId), Instant.now(), cfg.zone, eventAt) +
+                (updatedAt?.let { updatedNote(it, cfg.zone) } ?: "")
+    }
+
+    private suspend fun statusMessage(
+        userId: Long, houseId: Long, act: ResultRow, updatedAt: Instant? = null,
+    ): SendMessageRequest = max.messageBody(
+        actStatusText(houseId, act, updatedAt),
+        statusButtons(act, rolesOf(userId).chairman),
+    )
+
+    // null — заменять нечем (нет дома или акта), отвечаем обычным сообщением
+    private suspend fun statusEdit(userId: Long): SendMessageRequest? {
+        val houseId = rolesOf(userId).houseId ?: return null
+        return acts.currentAct(houseId)?.let { statusMessage(userId, houseId, it, updatedAt = Instant.now()) }
     }
 
     private suspend fun handleRcvOther(userId: Long, actId: Long) {
@@ -436,12 +456,9 @@ class Bot(
         }
         val roles = rolesOf(userId)
         val act = acts.currentAct(houseId)
-        // адрес и дата события нужны только внутри статуса — без акта в БД не ходим
-        val address = if (act == null) "" else houseAddress(houseId)
-        val eventAt = act?.let { acts.terminalEventAt(it[Acts.id].value, it[Acts.status]) }
         max.sendText(
             userId,
-            menuText(act, address, roles.chairman, Instant.now(), cfg.zone, eventAt),
+            menuText(act?.let { actStatusText(houseId, it) }, roles.chairman),
             if (act == null) emptyList() else statusButtons(act, roles.chairman),
         )
     }
