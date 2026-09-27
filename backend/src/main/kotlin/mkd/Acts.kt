@@ -118,14 +118,7 @@ class ActService(
     suspend fun confirmReceipt(actId: Long, userId: Long, date: LocalDate?): ResultRow {
         requireChairmanOf(actId, userId)
         val zone = cfg.zone
-        val today = Instant.now().atZone(zone).toLocalDate()
-        if (date != null && (date.isAfter(today) || date.isBefore(today.minusDays(30)))) {
-            throw ApiError(
-                HttpStatusCode.BadRequest,
-                "invalid_date",
-                "Дата должна быть не позже сегодняшней и не раньше чем 30 дней назад"
-            )
-        }
+        if (date != null) checkReceiptDate(date, Instant.now().atZone(zone).toLocalDate())
         return tx { confirmReceiptTx(actId, userId, date?.atTime(12, 0)?.atZone(zone)?.toInstant(), zone) }
     }
 
@@ -405,6 +398,24 @@ fun lockOpenReceiptTx(actId: Long, zone: ZoneId): ResultRow {
         )
     }
     return act
+}
+
+private const val RECEIPT_WINDOW_DAYS = 30L
+
+// дата получения акта, введённая председателем: не позже сегодня и не раньше 30 дней назад.
+// Текст ошибки бот шлёт как есть и ждёт следующую дату, поэтому в нём — просьба ввести её заново
+fun checkReceiptDate(date: LocalDate, today: LocalDate) {
+    val problem = when {
+        date.isAfter(today) -> "Дата получения не может быть позже сегодняшней."
+        date.isBefore(today.minusDays(RECEIPT_WINDOW_DAYS)) ->
+            "Если акт получен больше 30 дней назад, срок на подписание или отказ уже истёк — " +
+                    "по п. 5 приказа Минстроя № 318/пр акт считается принятым."
+        else -> return
+    }
+    throw ApiError(
+        HttpStatusCode.BadRequest, "invalid_date",
+        "$problem Если дата введена с ошибкой — напишите правильную в формате ДД.ММ.ГГГГ",
+    )
 }
 
 // receivedAt == null — оставить T0 моментом загрузки; вызывать только внутри tx { }
