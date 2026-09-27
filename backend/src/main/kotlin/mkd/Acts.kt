@@ -153,6 +153,15 @@ class ActService(
         )
         tx {
             val act = Acts.selectAll().where { Acts.id eq actId }.single()
+            if (act[Acts.status] == ActStatus.REJECTED) {
+                // у акта с отказом сроки 10/30 уже не идут — сдвигаем отправку отказа (напоминание о новом акте)
+                val refusal = Refusals.selectAll().where { Refusals.actId eq actId }.single()
+                Refusals.update({ Refusals.actId eq actId }) {
+                    it[Refusals.sentAt] = refusal[Refusals.sentAt]!!.minus(days.toLong(), ChronoUnit.DAYS)
+                }
+                logEvent(actId, "DEMO_SHIFT", userId, "days=$days refusal")
+                return@tx
+            }
             val receivedAt = act[Acts.receivedAt].minus(days.toLong(), ChronoUnit.DAYS)
             Acts.update({ Acts.id eq actId }) {
                 it[Acts.receivedAt] = receivedAt
