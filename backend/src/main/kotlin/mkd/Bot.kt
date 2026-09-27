@@ -125,13 +125,16 @@ class Bot(
             max.sendText(userId, "Не получилось разобрать дату. Напишите в формате ДД.ММ.ГГГГ, например 20.09.2026")
             return
         }
-        pending.remove(userId)
         val act = try {
             acts.confirmReceipt(actId, userId, date)
         } catch (e: ApiError) {
+            // дата вне окна — ждём следующую, как и при ошибке формата; иначе (дата уже зафиксирована,
+            // акт недоступен) ждать нечего
+            if (e.code != "invalid_date") pending.remove(userId)
             max.sendText(userId, e.message)
             return
         }
+        pending.remove(userId)
         finalizeReceipt(userId, act)
     }
 
@@ -142,8 +145,10 @@ class Bot(
         } catch (e: ApiError) {
             return max.messageBody(e.message)
         }
+        // «Сегодня» после «Другой даты»: ввод даты больше не ждём
+        pending.remove(userId, Pending.ReceiptDate(actId))
         finalizeReceipt(userId, act)
-        val date = receiptDateFormat.withZone(cfg.zone).format(act[Acts.receivedAt])
+        val date =receiptDateFormat.withZone(cfg.zone).format(act[Acts.receivedAt])
         return max.messageBody("Дата получения акта зафиксирована — $date. От неё идут сроки 10 и 30 дней.")
     }
 

@@ -1164,7 +1164,8 @@ class ActService(private val cfg: Config, private val max: MaxBotClient) {
   есть подтверждение получения (FR-B2, NFR-4).
 
 `setReceiptDate`: дата не в будущем и не раньше чем 30 дней назад (иначе
-`ApiError(400, …)`/ответ в боте); `receivedAt = date.atTime(12,0).atZone(zone)`,
+`ApiError(400, …)`/ответ в боте, бот ждёт следующую дату; для даты старше 30 дней
+объясняем, что по п. 5 акт уже считается принятым); `receivedAt = date.atTime(12,0).atZone(zone)`,
 пересчитать `deadline10/30`, событие `RECEIPT_DATE_SET`.
 
 `Bot.kt` — `message_created` с вложением `file` или `image`:
