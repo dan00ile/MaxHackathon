@@ -126,17 +126,29 @@ class Bot(
             return
         }
         pending.remove(userId)
-        try {
-            acts.setReceiptDate(actId, userId, date)
+        val act = try {
+            acts.confirmReceipt(actId, userId, date)
         } catch (e: ApiError) {
             max.sendText(userId, e.message)
             return
         }
-        finalizeReceipt(userId, actId)
+        finalizeReceipt(userId, act)
     }
 
-    private suspend fun finalizeReceipt(userId: Long, actId: Long) {
-        val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
+    // возвращает, чем заменить сообщение с вопросом о дате: кнопки «Сегодня/Другая дата» после ответа не нужны
+    private suspend fun handleRcvToday(userId: Long, actId: Long): SendMessageRequest {
+        val act = try {
+            acts.confirmReceipt(actId, userId, null)
+        } catch (e: ApiError) {
+            return max.messageBody(e.message)
+        }
+        finalizeReceipt(userId, act)
+        val date = receiptDateFormat.withZone(cfg.zone).format(act[Acts.receivedAt])
+        return max.messageBody("Дата получения акта зафиксирована — $date. От неё идут сроки 10 и 30 дней.")
+    }
+
+    private suspend fun finalizeReceipt(userId: Long, act: ResultRow) {
+        val actId = act[Acts.id].value
         tx { logEvent(actId, "NOTIFY_D0", null) }
         sendStatus(userId, act[Acts.houseId].value, act)
         scope.launch { runCatching { acts.recognize(actId) }.onFailure { log.error("recognize", it) } }
@@ -154,8 +166,8 @@ class Bot(
                 "role_res" -> handleRoleResident(userId, arg!!.toLong())
                 "role_chair" -> handleRoleChairman(userId, arg!!.toLong())
                 "approve" -> handleApprove(userId, arg!!.toLong())
-                "rcv_today" -> finalizeReceipt(userId, arg!!.toLong())
-                "rcv_other" -> handleRcvOther(userId, arg!!.toLong())
+                "rcv_today" -> edit = handleRcvToday(userId, arg!!.toLong())
+                "rcv_other" -> edit = handleRcvOther(userId, arg!!.toLong())
                 // меню и статусы акта сменяют друг друга в одном сообщении: status — меню, status:<id> — акт
                 "status" -> edit = if (arg == null) menuEdit(userId) ?: run { entryPoint(userId); null }
                 else statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
@@ -173,7 +185,11 @@ class Bot(
             .getOrDefault(false)
         // MAX не заменил сообщение (слишком старое, удалено) — статус не теряем, присылаем новым
         if (edit != null && !answered) {
-            if (arg == null) entryPoint(userId) else sendActStatus(userId, arg.toLong())
+            when {
+                cmd != "status" -> max.sendMessage(userId, edit!!)
+                arg == null -> entryPoint(userId)
+                else -> sendActStatus(userId, arg.toLong())
+            }
         }
     }
 
@@ -332,9 +348,16 @@ class Bot(
         return statusMessage(userId, act[Acts.houseId].value, act, updatedAt = Instant.now())
     }
 
-    private suspend fun handleRcvOther(userId: Long, actId: Long) {
+    // кнопки не убираем: пока дата не введена, «Сегодня» ещё может понадобиться
+    private suspend fun handleRcvOther(userId: Long, actId: Long): SendMessageRequest? {
+        try {
+            acts.requireReceiptOpen(actId, userId)
+        } catch (e: ApiError) {
+            return max.messageBody(e.message)
+        }
         pending[userId] = Pending.ReceiptDate(actId)
         max.sendText(userId, "Напишите дату в формате ДД.ММ.ГГГГ")
+        return null
     }
 
     private suspend fun handleClose(userId: Long, actId: Long) {

@@ -108,27 +108,25 @@ class ActService(
         }
     }
 
-    suspend fun setReceiptDate(actId: Long, userId: Long, date: LocalDate) {
+    // «Другая дата» — до ввода даты: не спрашиваем её у акта, где T0 уже зафиксирован
+    suspend fun requireReceiptOpen(actId: Long, userId: Long) {
+        requireChairmanOf(actId, userId)
+        tx { lockOpenReceiptTx(actId, cfg.zone) }
+    }
+
+    // date == null — «Сегодня»: T0 остаётся моментом загрузки акта
+    suspend fun confirmReceipt(actId: Long, userId: Long, date: LocalDate?): ResultRow {
+        requireChairmanOf(actId, userId)
         val zone = cfg.zone
         val today = Instant.now().atZone(zone).toLocalDate()
-        if (date.isAfter(today) || date.isBefore(today.minusDays(30))) {
+        if (date != null && (date.isAfter(today) || date.isBefore(today.minusDays(30)))) {
             throw ApiError(
                 HttpStatusCode.BadRequest,
                 "invalid_date",
                 "Дата должна быть не позже сегодняшней и не раньше чем 30 дней назад"
             )
         }
-        val receivedAt = date.atTime(12, 0).atZone(zone).toInstant()
-        val deadline10 = Deadlines.day10(receivedAt, zone)
-        val deadline30 = Deadlines.day30(receivedAt, zone)
-        tx {
-            Acts.update({ Acts.id eq actId }) {
-                it[Acts.receivedAt] = receivedAt
-                it[Acts.deadline10] = deadline10
-                it[Acts.deadline30] = deadline30
-            }
-            logEvent(actId, "RECEIPT_DATE_SET", userId, "date=$date")
-        }
+        return tx { confirmReceiptTx(actId, userId, date?.atTime(12, 0)?.atZone(zone)?.toInstant(), zone) }
     }
 
     suspend fun requireChairmanOf(actId: Long, userId: Long): ResultRow = tx {
@@ -379,6 +377,40 @@ class ActService(
         }
         chairmen.forEach { uid -> max.sendText(uid, text, listOf(listOf(link("Открыть акт", appLink("act_$actId"))))) }
     }
+}
+
+// T0 подтверждается один раз: от него идут сроки 10/30 дней, а кнопки старого сообщения с вопросом о дате
+// остаются кликабельными. Вызывать только внутри tx { }: строка акта блокируется до конца транзакции,
+// поэтому два быстрых нажатия не подтвердят дату дважды. Статус не RECEIVED — акт уже в работе
+// (и акты, заведённые до события RECEIPT_CONFIRMED)
+fun lockOpenReceiptTx(actId: Long, zone: ZoneId): ResultRow {
+    val act = Acts.selectAll().where { Acts.id eq actId }.forUpdate().single()
+    val confirmed = act[Acts.status] != ActStatus.RECEIVED ||
+            Events.selectAll().where { (Events.actId eq actId) and (Events.type eq "RECEIPT_CONFIRMED") }.count() > 0
+    if (confirmed) {
+        val date = DateTimeFormatter.ofPattern("dd.MM.yyyy").withZone(zone).format(act[Acts.receivedAt])
+        throw ApiError(
+            HttpStatusCode.Conflict, "receipt_confirmed",
+            "Дата получения этого акта уже зафиксирована — $date. Изменить её нельзя: от неё идут сроки " +
+                    "10 и 30 дней. Если пришёл новый акт — загрузите его файлом.",
+        )
+    }
+    return act
+}
+
+// receivedAt == null — оставить T0 моментом загрузки; вызывать только внутри tx { }
+fun confirmReceiptTx(actId: Long, userId: Long, receivedAt: Instant?, zone: ZoneId): ResultRow {
+    lockOpenReceiptTx(actId, zone)
+    if (receivedAt != null) {
+        Acts.update({ Acts.id eq actId }) {
+            it[Acts.receivedAt] = receivedAt
+            it[deadline10] = Deadlines.day10(receivedAt, zone)
+            it[deadline30] = Deadlines.day30(receivedAt, zone)
+        }
+        logEvent(actId, "RECEIPT_DATE_SET", userId, "date=${receivedAt.atZone(zone).toLocalDate()}")
+    }
+    logEvent(actId, "RECEIPT_CONFIRMED", userId)
+    return Acts.selectAll().where { Acts.id eq actId }.single()
 }
 
 val ACTIVE_STATUSES = listOf(ActStatus.RECEIVED, ActStatus.COLLECTING, ActStatus.REVIEW)
