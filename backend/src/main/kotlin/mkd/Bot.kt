@@ -296,9 +296,12 @@ class Bot(
             max.sendText(userId, "Использование: /shift N (число дней, только в демо-режиме)")
             return
         }
-        val actId = acts.activeAct(houseId)?.get(Acts.id)?.value
+        // акт в работе, а если его нет — последний акт с отказом (проверить напоминание о новом акте)
+        val actId = tx {
+            activeActTx(houseId) ?: houseActsTx(houseId).firstOrNull { it[Acts.status] == ActStatus.REJECTED }
+        }?.get(Acts.id)?.value
         if (actId == null) {
-            max.sendText(userId, "Нет активного акта.")
+            max.sendText(userId, "Нет акта в работе или с направленным отказом.")
             return
         }
         try {
