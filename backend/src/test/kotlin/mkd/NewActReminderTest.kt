@@ -4,6 +4,7 @@ import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.deleteAll
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -83,5 +84,13 @@ class NewActReminderTest {
     fun `no reminder when a new act was uploaded after the refusal`() {
         transaction(testDb) { insertAct(ActStatus.COLLECTING, refusalSentAt.plus(5, ChronoUnit.DAYS)) }
         assertEquals(emptyList(), due(afterDue))
+    }
+
+    @Test
+    fun `rejected act itself does not count as a new act`() {
+        transaction(testDb) {
+            Acts.update({ Acts.id eq rejectedActId }) { it[Acts.createdAt] = refusalSentAt.plus(1, ChronoUnit.DAYS) }
+        }
+        assertEquals(listOf(rejectedActId), due(afterDue))
     }
 }
