@@ -131,9 +131,11 @@ class Bot(
             acts.confirmReceipt(actId, userId, date)
         } catch (e: ApiError) {
             // дата вне окна — ждём следующую, как и при ошибке формата; иначе (дата уже зафиксирована,
-            // акт недоступен) ждать нечего
-            if (e.code != "invalid_date") pending.remove(userId)
-            max.sendText(userId, e.message)
+            // акт недоступен) ждать нечего. Срок истёк и нового акта нет — выход через «Убрать акт»
+            if (e.code != "invalid_date" && e.code != "receipt_expired") pending.remove(userId)
+            val buttons =
+                if (e.code == "receipt_expired") listOf(listOf(cb("Убрать акт", "act_drop:$actId"))) else emptyList()
+            max.sendText(userId, e.message, buttons)
             return
         }
         pending.remove(userId)
@@ -175,6 +177,7 @@ class Bot(
                 "approve" -> handleApprove(userId, arg!!.toLong())
                 "rcv_today" -> edit = handleRcvToday(userId, arg!!.toLong())
                 "rcv_other" -> edit = handleRcvOther(userId, arg!!.toLong())
+                "act_drop" -> edit = handleActDrop(userId, arg!!.toLong())
                 // меню и статусы акта сменяют друг друга в одном сообщении: status — меню, status:<id> — акт
                 "status" -> edit = if (arg == null) menuEdit(userId) ?: run { entryPoint(userId); null }
                 else statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
@@ -368,6 +371,18 @@ class Bot(
         pending[userId] = Pending.ReceiptDate(actId)
         max.sendText(userId, "Напишите дату в формате ДД.ММ.ГГГГ")
         return null
+    }
+
+    // заменяет сообщение об истёкшем сроке, а меню приходит следом — чтобы было куда идти дальше
+    private suspend fun handleActDrop(userId: Long, actId: Long): SendMessageRequest {
+        try {
+            acts.archiveUnconfirmed(actId, userId)
+        } catch (e: ApiError) {
+            return max.messageBody(e.message)
+        }
+        pending.remove(userId, Pending.ReceiptDate(actId))
+        entryPoint(userId)
+        return max.messageBody("Акт убран в архив: по нему не будет напоминаний и он не появится в списке актов.")
     }
 
     private suspend fun handleClose(userId: Long, actId: Long) {

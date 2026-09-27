@@ -25,6 +25,8 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // Диалог «Другая дата» целиком: настоящий Postgres и фейковый MAX API, который запоминает тексты
@@ -38,9 +40,11 @@ class ReceiptDateFlowTest {
     private var actId = 0L
 
     private val sent = CopyOnWriteArrayList<String>()
+    private val raw = CopyOnWriteArrayList<String>()   // все тела запросов: кнопки и ответы на нажатия
     private val maxApi = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
             val body = exchange.requestBody.readBytes().decodeToString()
+            raw.add(body)
             if (exchange.requestURI.path == "/messages") {
                 AppJson.decodeFromString(SendMessageRequest.serializer(), body).text?.let(sent::add)
             }
@@ -140,6 +144,48 @@ class ReceiptDateFlowTest {
 
     private fun confirmedEvents(id: Long = actId) = transaction(testDb) {
         Events.selectAll().where { (Events.actId eq id) and (Events.type eq "RECEIPT_CONFIRMED") }.count()
+    }
+
+    @Test
+    fun `expired act without a new one - drop button archives it and ends the date dialog`() {
+        press("rcv_other:$actId")
+        write(fmt.format(today.minusDays(40)))
+        assertTrue("act_drop:$actId" in raw.last(), "к сообщению об истёкшем сроке приложена кнопка")
+
+        write(fmt.format(today.plusDays(1)))
+        assertTrue("act_drop" !in raw.last(), "при дате в будущем кнопки нет — это опечатка")
+
+        press("act_drop:$actId")
+        transaction(testDb) {
+            val act = Acts.selectAll().where { Acts.id eq actId }.single()
+            assertNotNull(act[Acts.archivedAt], "акт в архиве")
+            assertNull(activeActTx(act[Acts.houseId].value), "активного акта в доме нет")
+        }
+        assertTrue(raw.any { "Акт убран в архив" in it }, "сообщение об ошибке заменено подтверждением")
+
+        press("act_drop:$actId")
+        val archivedEvents = transaction(testDb) {
+            Events.selectAll().where { (Events.actId eq actId) and (Events.type eq "ACT_ARCHIVED") }.count()
+        }
+        assertEquals(1, archivedEvents, "повторное нажатие не архивирует второй раз")
+
+        val before = sent.size
+        write(fmt.format(today.minusDays(5)))
+        assertEquals(before, sent.size, "дату больше не ждём")
+        assertEquals(uploadedAt, receivedAt(), "T0 не тронут")
+        assertEquals(0, confirmedEvents())
+    }
+
+    @Test
+    fun `drop button does nothing once the receipt date is confirmed`() {
+        press("rcv_other:$actId")
+        write(fmt.format(today.minusDays(40)))
+        write(fmt.format(today.minusDays(5)))
+
+        press("act_drop:$actId")
+        val archivedAt = transaction(testDb) { Acts.selectAll().where { Acts.id eq actId }.single()[Acts.archivedAt] }
+        assertNull(archivedAt, "акт в работе не архивируем")
+        assertTrue(raw.last().contains("уже зафиксирована"), raw.last())
     }
 
     @Test
