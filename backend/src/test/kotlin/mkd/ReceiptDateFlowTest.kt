@@ -5,6 +5,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteAll
@@ -121,12 +124,43 @@ class ReceiptDateFlowTest {
         bot.handle(Update("message_created", 0, message = Message(MaxUser(chairmanId), Recipient(), 0, body)))
     }
 
-    private fun receivedAt() = transaction(testDb) {
-        Acts.selectAll().where { Acts.id eq actId }.single()[Acts.receivedAt]
+    private fun uploadAct() = runBlocking {
+        val file = buildJsonObject {
+            put("type", "file")
+            put("filename", "act2.pdf")
+            putJsonObject("payload") { put("url", "http://127.0.0.1:${maxApi.address.port}/files/act2.pdf") }
+        }
+        val body = MessageBody(mid = "mid2", attachments = listOf(file))
+        bot.handle(Update("message_created", 0, message = Message(MaxUser(chairmanId), Recipient(), 0, body)))
     }
 
-    private fun confirmedEvents() = transaction(testDb) {
-        Events.selectAll().where { (Events.actId eq actId) and (Events.type eq "RECEIPT_CONFIRMED") }.count()
+    private fun receivedAt(id: Long = actId) = transaction(testDb) {
+        Acts.selectAll().where { Acts.id eq id }.single()[Acts.receivedAt]
+    }
+
+    private fun confirmedEvents(id: Long = actId) = transaction(testDb) {
+        Events.selectAll().where { (Events.actId eq id) and (Events.type eq "RECEIPT_CONFIRMED") }.count()
+    }
+
+    @Test
+    fun `expired act - uploading another act ends the date dialog of the old one`() {
+        press("rcv_other:$actId")
+        write(fmt.format(today.minusDays(40)))
+        assertTrue("загрузите его файлом" in sent.last(), sent.last())
+
+        uploadAct()
+        val newActId = transaction(testDb) { Acts.selectAll().maxOf { it[Acts.id].value } }
+        assertTrue(newActId != actId)
+        assertTrue("Когда вы получили этот акт" in sent.last(), sent.last())
+
+        press("rcv_today:$newActId")
+        assertEquals(1, confirmedEvents(newActId), "новый акт принят с датой загрузки")
+        val before = sent.size
+
+        write(fmt.format(today.minusDays(5)))
+        assertEquals(before, sent.size, "текст не разбирается как дата старого акта")
+        assertEquals(uploadedAt, receivedAt(), "T0 старого акта не тронут")
+        assertEquals(0, confirmedEvents())
     }
 
     @Test
@@ -134,7 +168,7 @@ class ReceiptDateFlowTest {
         press("rcv_other:$actId")
 
         write(fmt.format(today.minusDays(40)))
-        assertTrue("318/пр" in sent.last(), "объяснили молчаливое согласие: ${sent.last()}")
+        assertTrue("Срок по этому акту истёк" in sent.last(), sent.last())
         assertEquals(uploadedAt, receivedAt(), "T0 не тронут")
         assertEquals(0, confirmedEvents())
 

@@ -24,10 +24,12 @@ class ReceiptDateTest {
     }
 
     @Test
-    fun `date older than 30 days explains silent consent`() {
+    fun `date older than 30 days says the term expired and offers another act`() {
         val error = assertFailsWith<ApiError> { checkReceiptDate(today.minusDays(31), today) }
         assertEquals("invalid_date", error.code)
+        assertTrue("Срок по этому акту истёк" in error.message)
         assertTrue("318/пр" in error.message, "объясняем, почему бот тут уже не поможет")
-        assertTrue("напишите правильную" in error.message)
+        assertTrue("загрузите его файлом" in error.message, "предлагаем загрузить другой акт")
+        assertTrue("напишите правильную" in error.message, "опечатку в дате ещё можно исправить")
     }
 }

@@ -109,6 +109,8 @@ class Bot(
             return
         }
         val houseId = roles.houseId!!
+        // новый акт вместо того, по которому ждали дату (например, срок истёк): старый ввод больше не ждём
+        pending.remove(userId)
         val bytes = max.download(url)
         val receivedAt = Instant.ofEpochMilli(timestampMs)
         val actId = acts.createFromUpload(userId, houseId, bytes, fileName, mimeOf(fileName), receivedAt, mid)
