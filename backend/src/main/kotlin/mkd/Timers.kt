@@ -39,7 +39,10 @@ fun dueNewActRemindersTx(now: Instant, zone: ZoneId): List<ResultRow> =
                         .where { (Events.actId eq row[Acts.id].value) and (Events.type eq "NOTIFY_NEW_ACT") }
                         .empty() &&
                     Acts.selectAll()
-                        .where { (Acts.houseId eq row[Acts.houseId]) and (Acts.createdAt greater sentAt) }
+                        .where {
+                            (Acts.houseId eq row[Acts.houseId]) and (Acts.id neq row[Acts.id]) and
+                                    (Acts.createdAt greater sentAt)
+                        }
                         .empty()
         }
 
