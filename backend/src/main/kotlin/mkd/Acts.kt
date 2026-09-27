@@ -122,6 +122,20 @@ class ActService(
         return tx { confirmReceiptTx(actId, userId, date?.atTime(12, 0)?.atZone(zone)?.toInstant(), zone) }
     }
 
+    // акт с истёкшим сроком, от которого председатель отказался: дата получения так и не подтверждена.
+    // В архиве его не видят ни таймеры, ни списки актов
+    suspend fun archiveUnconfirmed(actId: Long, userId: Long) {
+        requireChairmanOf(actId, userId)
+        tx {
+            lockOpenReceiptTx(actId, cfg.zone)
+            // повторное нажатие кнопки не пишет второе событие
+            val archived = Acts.update({ (Acts.id eq actId) and Acts.archivedAt.isNull() }) {
+                it[archivedAt] = Instant.now()
+            }
+            if (archived > 0) logEvent(actId, "ACT_ARCHIVED", userId, "reason=receipt_expired")
+        }
+    }
+
     suspend fun requireChairmanOf(actId: Long, userId: Long): ResultRow = tx {
         val act = Acts.selectAll().where { Acts.id eq actId }.singleOrNull()
             ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Акт не найден")
@@ -405,15 +419,18 @@ private const val RECEIPT_WINDOW_DAYS = 30L
 // дата получения акта, введённая председателем: не позже сегодня и не раньше 30 дней назад.
 // Текст ошибки бот шлёт как есть и ждёт следующую дату, поэтому в нём — просьба ввести её заново
 fun checkReceiptDate(date: LocalDate, today: LocalDate) {
-    val problem = when {
-        date.isAfter(today) -> "Дата получения не может быть позже сегодняшней."
-        date.isBefore(today.minusDays(RECEIPT_WINDOW_DAYS)) ->
-            "Если акт получен больше 30 дней назад, срок на подписание или отказ уже истёк — " +
-                    "по п. 5 приказа Минстроя № 318/пр акт считается принятым."
+    val (code, problem) = when {
+        date.isAfter(today) -> "invalid_date" to "Дата получения не может быть позже сегодняшней."
+        // дата может быть и верной: тогда с этим актом делать уже нечего — предлагаем загрузить другой
+        // или убрать этот (бот добавляет кнопку по коду receipt_expired)
+        date.isBefore(today.minusDays(RECEIPT_WINDOW_DAYS)) -> "receipt_expired" to
+                "Срок по этому акту истёк: с даты получения прошло больше 30 дней, и по п. 5 приказа " +
+                "Минстроя № 318/пр акт считается принятым. Если от УК пришёл другой акт — " +
+                "загрузите его файлом в этот чат, если нет — нажмите «Убрать акт»."
         else -> return
     }
     throw ApiError(
-        HttpStatusCode.BadRequest, "invalid_date",
+        HttpStatusCode.BadRequest, code,
         "$problem Если дата введена с ошибкой — напишите правильную в формате ДД.ММ.ГГГГ",
     )
 }
