@@ -23,6 +23,26 @@ fun planNotifications(receivedAt: Instant, sent: Set<String>, now: Instant, zone
     return NotifyPlan(due.dropLast(1), due.last())
 }
 
+// П. 6 Порядка не задаёт срок, в который УК оформляет новый акт после отказа, поэтому «просрочки» нет —
+// только одно мягкое напоминание председателю через месяц (обычный цикл актов по договору)
+const val NEW_ACT_REMINDER_DAYS = 30
+
+// акты с отказом, по которым пора напомнить о новом акте: со дня отправки отказа прошло NEW_ACT_REMINDER_DAYS,
+// напоминания ещё не было и после отказа по дому не загружали ни одного акта; вызывать только внутри tx { }
+fun dueNewActRemindersTx(now: Instant, zone: ZoneId): List<ResultRow> =
+    (Acts innerJoin Refusals).selectAll()
+        .where { (Acts.status eq ActStatus.REJECTED) and Acts.archivedAt.isNull() and Refusals.sentAt.isNotNull() }
+        .filter { row ->
+            val sentAt = row[Refusals.sentAt]!!
+            now >= Deadlines.milestoneAt(sentAt, NEW_ACT_REMINDER_DAYS, zone) &&
+                    Events.selectAll()
+                        .where { (Events.actId eq row[Acts.id].value) and (Events.type eq "NOTIFY_NEW_ACT") }
+                        .empty() &&
+                    Acts.selectAll()
+                        .where { (Acts.houseId eq row[Acts.houseId]) and (Acts.createdAt greater sentAt) }
+                        .empty()
+        }
+
 class TimerService(
     private val cfg: Config,
     private val max: MaxBotClient,
@@ -90,6 +110,21 @@ class TimerService(
                         "${act[Acts.period] ?: "—"} считается подписанным (молчаливое согласие, п. 5 Порядка, приказ Минстроя № 318/пр)."
             if (notify(act[Acts.houseId].value, actId, text, includeResidents = true)) {
                 tx { logEvent(actId, "NOTIFY_SILENT", null, "sent") }
+            }
+        }
+        remindNewActs(now)
+    }
+
+    private suspend fun remindNewActs(now: Instant) {
+        val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy").withZone(cfg.zone)
+        for (act in tx { dueNewActRemindersTx(now, cfg.zone) }) {
+            val actId = act[Acts.id].value
+            val text = "Отказ по акту № ${act[Acts.number] ?: "без номера"} за ${act[Acts.period] ?: "—"} " +
+                    "направлен в УК ${fmt.format(act[Refusals.sentAt])}, но новый акт пока не загружен. " +
+                    "Если УК его ещё не прислала — напомните ей оформить новый акт (п. 6 Порядка, приказ Минстроя " +
+                    "№ 318/пр). Когда он придёт, загрузите его сюда файлом."
+            if (notify(act[Acts.houseId].value, actId, text)) {
+                tx { logEvent(actId, "NOTIFY_NEW_ACT", null, "sent") }
             }
         }
     }

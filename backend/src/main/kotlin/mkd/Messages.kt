@@ -13,7 +13,7 @@ private val statusRu = mapOf(
     ActStatus.COLLECTING to "Идёт сбор замечаний",
     ActStatus.REVIEW to "Решение председателя",
     ActStatus.SIGNED to "Подписан",
-    ActStatus.REJECTED to "Отказ направлен",
+    ActStatus.REJECTED to "Отказ направлен, ожидается новый акт",
     ActStatus.SILENT to "Принят молчаливым согласием",
 )
 
