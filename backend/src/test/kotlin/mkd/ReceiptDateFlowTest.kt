@@ -39,6 +39,7 @@ class ReceiptDateFlowTest {
     private val today = LocalDate.now(zone)
     private var actId = 0L
 
+    private val demoAct = java.io.File("../demo/demo-act.pdf").readBytes()
     private val sent = CopyOnWriteArrayList<String>()
     private val raw = CopyOnWriteArrayList<String>()   // все тела запросов: кнопки и ответы на нажатия
     private val maxApi = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
@@ -48,7 +49,8 @@ class ReceiptDateFlowTest {
             if (exchange.requestURI.path == "/messages") {
                 AppJson.decodeFromString(SendMessageRequest.serializer(), body).text?.let(sent::add)
             }
-            val ok = "{}".toByteArray()
+            // загрузка акта проходит проверку файла, поэтому по ссылке должен лежать настоящий акт
+            val ok = if (exchange.requestURI.path.startsWith("/files/")) demoAct else "{}".toByteArray()
             exchange.sendResponseHeaders(200, ok.size.toLong())
             exchange.responseBody.use { it.write(ok) }
         }
@@ -84,7 +86,8 @@ class ReceiptDateFlowTest {
                 it[ManagementCompanies.exchangeMethod] = "email: uk@test.ru"
             } get ManagementCompanies.id
             val houseRef = Houses.insert {
-                it[Houses.address] = "г. Казань, ул. Тестовая, д. 1"
+                // адрес как в demo/demo-act.pdf: загружаемый в тесте акт должен пройти сверку с домом
+                it[Houses.address] = "г. Казань, ул. Демонстрационная, д. 1"
                 it[Houses.ukId] = ukRef
             } get Houses.id
             Users.insert {
@@ -136,6 +139,20 @@ class ReceiptDateFlowTest {
         }
         val body = MessageBody(mid = "mid2", attachments = listOf(file))
         bot.handle(Update("message_created", 0, message = Message(MaxUser(chairmanId), Recipient(), 0, body)))
+    }
+
+    @Test
+    fun `photo instead of a pdf does not create an act`() {
+        val photo = buildJsonObject {
+            put("type", "image")
+            putJsonObject("payload") { put("url", "http://127.0.0.1:${maxApi.address.port}/files/photo.jpg") }
+        }
+        val body = MessageBody(mid = "mid3", attachments = listOf(photo))
+        runBlocking {
+            bot.handle(Update("message_created", 0, message = Message(MaxUser(chairmanId), Recipient(), 0, body)))
+        }
+        assertTrue("файлом PDF" in sent.last(), sent.last())
+        assertEquals(1, transaction(testDb) { Acts.selectAll().count() }, "акт по фото не заводится")
     }
 
     private fun receivedAt(id: Long = actId) = transaction(testDb) {

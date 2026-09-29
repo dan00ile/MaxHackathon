@@ -338,16 +338,15 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
         val auth = call.authUser(cfg)
         val itemId = call.parameters["itemId"]!!.toLong()
         var bytes: ByteArray? = null
-        var mime: String? = null
         call.receiveMultipart(formFieldLimit = 10L * 1024 * 1024).forEachPart { part ->
             if (part is PartData.FileItem && part.name == "photo") {
-                mime = part.contentType?.toString()
                 bytes = part.provider().readRemaining().readByteArray()
             }
             part.dispose()
         }
         val data = bytes ?: throw ApiError(HttpStatusCode.BadRequest, "no_photo", "Файл не передан")
-        val mimeType = mime ?: ""
+        // тип берём из самого файла, а не из заголовка части: заголовок пишет клиент, и он может врать
+        val mimeType = ActFile.sniffMime(data) ?: ""
         if (mimeType !in setOf("image/jpeg", "image/png")) {
             throw ApiError(HttpStatusCode.BadRequest, "invalid_mime", "Допустимы только JPEG и PNG")
         }

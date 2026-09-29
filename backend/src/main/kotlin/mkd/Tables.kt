@@ -6,6 +6,8 @@ import org.jetbrains.exposed.sql.ReferenceOption
 import org.jetbrains.exposed.sql.javatime.date
 import org.jetbrains.exposed.sql.javatime.timestamp
 
+private const val SHA256_HEX_LEN = 64
+
 enum class ActStatus { RECEIVED, COLLECTING, REVIEW, SIGNED, REJECTED, SILENT }
 enum class Recognition { PENDING, DONE, FAILED }
 enum class Decision { ACCEPT, DISPUTE }
@@ -70,6 +72,8 @@ object Acts : LongIdTable("acts") {
     val status = enumerationByName("status", 16, ActStatus::class)
     val filePath = text("file_path")
     val fileName = text("file_name")
+    // SHA-256: повторная загрузка того же файла — не новый акт со своими сроками
+    val fileHash = varchar("file_hash", SHA256_HEX_LEN).nullable()
     val uploadedBy = long("uploaded_by").references(Users.id)
     val recognition = enumerationByName("recognition", 16, Recognition::class)
     val previousActId = long("previous_act_id").nullable()  // цепочка кругов (FR-G5, Should) — в Must всегда null

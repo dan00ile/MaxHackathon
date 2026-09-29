@@ -1,7 +1,5 @@
 package mkd
 
-import com.lowagie.text.pdf.PdfReader
-import com.lowagie.text.pdf.parser.PdfTextExtractor
 import io.ktor.http.*
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.dao.id.EntityID
@@ -74,19 +72,25 @@ class ActService(
         }
     }
 
-    suspend fun createFromUpload(
-        userId: Long, houseId: Long, bytes: ByteArray, fileName: String, mime: String,
-        receivedAt: Instant, mid: String,
-    ): Long {
-        val ext = when (mime) {
-            "application/pdf" -> "pdf"
-            "image/png" -> "png"
-            else -> "jpg"
+    // сюда доходит только то, что прошло ActFile.check: PDF по форме 761/пр
+    suspend fun createFromUpload(userId: Long, houseId: Long, upload: ActUpload): Long {
+        val receivedAt = upload.receivedAt
+        val hash = ActFile.sha256(upload.bytes)
+        // тот же файл второй раз — это тот же акт, а не новый круг со своими сроками
+        val duplicate = tx {
+            Acts.selectAll()
+                .where { (Acts.houseId eq houseId) and (Acts.fileHash eq hash) and Acts.archivedAt.isNull() }
+                .any()
         }
+        if (duplicate) throw ApiError(
+            HttpStatusCode.Conflict, "duplicate_act",
+            "Этот файл уже загружен, акт по нему заведён — сроки идут с первой загрузки. " +
+                "Если УК прислала новый акт, загрузите его файл.",
+        )
         val dir = Path.of(cfg.filesDir, "acts")
         Files.createDirectories(dir)
-        val storedPath = dir.resolve("${UUID.randomUUID()}.$ext")
-        Files.write(storedPath, bytes)
+        val storedPath = dir.resolve("${UUID.randomUUID()}.pdf")
+        Files.write(storedPath, upload.bytes)
 
         val deadline10 = Deadlines.day10(receivedAt, cfg.zone)
         val deadline30 = Deadlines.day30(receivedAt, cfg.zone)
@@ -98,12 +102,16 @@ class ActService(
                 it[Acts.deadline30] = deadline30
                 it[Acts.status] = ActStatus.RECEIVED
                 it[Acts.filePath] = storedPath.toString()
-                it[Acts.fileName] = fileName
+                it[Acts.fileName] = upload.fileName
+                it[Acts.fileHash] = hash
                 it[Acts.uploadedBy] = userId
                 it[Acts.recognition] = Recognition.PENDING
                 it[Acts.createdAt] = Instant.now()
             } get Acts.id
-            logEvent(id.value, "ACT_RECEIVED", userId, "mid=$mid; uploadedAt=${Instant.now()}; file=$fileName")
+            logEvent(
+                id.value, "ACT_RECEIVED", userId,
+                "mid=${upload.mid}; uploadedAt=${Instant.now()}; file=${upload.fileName}",
+            )
             id.value
         }
     }
@@ -318,22 +326,15 @@ class ActService(
 
     suspend fun recognize(actId: Long) {
         val act = tx { Acts.selectAll().where { Acts.id eq actId }.single() }
-        val fileName = act[Acts.fileName]
         val houseId = act[Acts.houseId].value
         val validKinds = tx { Grounds.selectAll().map { it[Grounds.workKind] }.toSet() }
 
         val recognized = runCatching {
             check(gigaChat.enabled) { "GigaChat не настроен" }
             val bytes = Files.readAllBytes(Path.of(act[Acts.filePath]))
-            val mime = mimeOfFileName(fileName)
-            val content = if (mime == "application/pdf") {
-                val text = extractPdfText(bytes)
-                if (text.length < 50) recognizeFromImage(bytes, fileName, mime, validKinds)
-                else gigaChat.chat(systemRecognizePrompt(validKinds), "Текст акта:\n$text")
-            } else {
-                recognizeFromImage(bytes, fileName, mime, validKinds)
-            }
-            parseRecognized(content, validKinds)
+            // текст из акта — чужой ввод в промпте: обрезаем, а результат всё равно валидируется parseRecognized
+            val text = ActFile.pdfText(bytes).take(ActFile.MAX_TEXT_CHARS)
+            parseRecognized(gigaChat.chat(systemRecognizePrompt(validKinds), "Текст акта:\n$text"), validKinds)
         }
 
         recognized.onSuccess { r ->
@@ -373,16 +374,6 @@ class ActService(
                 "Не удалось распознать акт автоматически — введите позиции вручную, это займёт пару минут."
             )
         }
-    }
-
-    private suspend fun recognizeFromImage(
-        bytes: ByteArray,
-        fileName: String,
-        mime: String,
-        validKinds: Set<String>
-    ): String {
-        val fileId = gigaChat.uploadFile(bytes, fileName, mime)
-        return gigaChat.chat(systemRecognizePrompt(validKinds), "Распознай акт на изображении.", listOf(fileId))
     }
 
     private suspend fun notifyChairmen(houseId: Long, actId: Long, text: String) {
@@ -466,22 +457,6 @@ fun houseActsTx(houseId: Long): List<ResultRow> =
     Acts.selectAll().where { (Acts.houseId eq houseId) and Acts.archivedAt.isNull() }
         .orderBy(Acts.createdAt to SortOrder.DESC)
         .toList()
-
-private fun mimeOfFileName(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
-    "pdf" -> "application/pdf"
-    "png" -> "image/png"
-    else -> "image/jpeg"
-}
-
-private fun extractPdfText(bytes: ByteArray): String {
-    val reader = PdfReader(bytes)
-    return try {
-        val extractor = PdfTextExtractor(reader)
-        (1..reader.numberOfPages).joinToString("\n") { extractor.getTextFromPage(it) }
-    } finally {
-        reader.close()
-    }
-}
 
 private fun systemRecognizePrompt(validKinds: Set<String>): String = """
     Ты извлекаешь данные из акта приёмки оказанных услуг и выполненных работ по содержанию и

@@ -19,6 +19,10 @@ sealed interface Pending {
     data class ChairFio(val houseId: Long) : Pending
     data class ChairBasis(val houseId: Long, val fio: String) : Pending
     data class ReceiptDate(val actId: Long) : Pending     // S9
+
+    // файл прошёл проверку формы, но адрес дома в нём не нашёлся: держим файл до ответа председателя,
+    // чтобы акт и его сроки 10/30 не появились раньше подтверждения
+    data class ActConfirm(val upload: ActUpload) : Pending
 }
 
 fun appLink(startParam: String) = "https://max.ru/$botUsername?startapp=$startParam"
@@ -28,6 +32,11 @@ private const val CONSENT_TEXT = "Бот помогает совету дома 
         "Нажимая кнопку, вы соглашаетесь на обработку этих данных."
 
 private val receiptDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+
+private const val BYTES_IN_MB = 1024 * 1024
+
+private const val NEED_PDF = "Акт нужен файлом PDF — тем, что прислала УК. Фото и скриншот не подойдут: " +
+    "по ним нельзя проверить ни форму акта, ни адрес дома."
 
 class Bot(
     private val cfg: Config, private val max: MaxBotClient, private val acts: ActService,
@@ -63,9 +72,9 @@ class Bot(
     private suspend fun onMessage(u: Update) {
         val message = u.message ?: return
         val userId = message.sender?.userId ?: return
-        val attachment = firstActAttachment(message.body.attachments)
+        val attachment = firstFileAttachment(message.body.attachments)
         if (attachment != null) {
-            handleActUpload(userId, message.timestamp, message.body.mid, attachment.first, attachment.second)
+            handleActUpload(userId, message.timestamp, message.body.mid, attachment)
             return
         }
         val text = message.body.text?.trim() ?: return
@@ -78,6 +87,7 @@ class Bot(
             is Pending.ChairFio -> handleChairFioText(userId, p.houseId, text)
             is Pending.ChairBasis -> handleChairBasisText(userId, p.houseId, p.fio, text)
             is Pending.ReceiptDate -> handleReceiptDateText(userId, p.actId, text)
+            is Pending.ActConfirm -> Unit    // ждём кнопку под сообщением, текст здесь ни на что не влияет
             null -> when {
                 text == "/start" || text == "/menu" -> entryPoint(userId)
                 text == "/status" -> entryPoint(userId)
@@ -87,36 +97,75 @@ class Bot(
         }
     }
 
-    private fun firstActAttachment(attachments: List<JsonObject>): Pair<String, String>? {
-        val att = attachments.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull in listOf("file", "image") }
-            ?: return null
-        val type = att["type"]!!.jsonPrimitive.content
-        val url = att["payload"]!!.jsonObject["url"]!!.jsonPrimitive.content
-        val fileName = att["filename"]?.jsonPrimitive?.contentOrNull ?: if (type == "image") "photo.jpg" else "act.pdf"
-        return url to fileName
-    }
+    // картинку тоже ловим: председателю, приславшему фото акта, надо объяснить, что нужен PDF
+    private fun firstFileAttachment(attachments: List<JsonObject>): JsonObject? =
+        attachments.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull in listOf("file", "image") }
 
-    private fun mimeOf(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
-        "pdf" -> "application/pdf"
-        "png" -> "image/png"
-        else -> "image/jpeg"
-    }
-
-    private suspend fun handleActUpload(userId: Long, timestampMs: Long, mid: String, url: String, fileName: String) {
+    private suspend fun handleActUpload(userId: Long, timestampMs: Long, mid: String, att: JsonObject) {
         val roles = rolesOf(userId)
-        if (!roles.chairman) {
+        val houseId = roles.houseId
+        if (!roles.chairman || houseId == null) {
             max.sendText(userId, "Загружать акт может только председатель совета дома.")
             return
         }
-        val houseId = roles.houseId!!
         // новый акт вместо того, по которому ждали дату (например, срок истёк): старый ввод больше не ждём
         pending.remove(userId)
-        val bytes = max.download(url)
-        val receivedAt = Instant.ofEpochMilli(timestampMs)
-        val actId = acts.createFromUpload(userId, houseId, bytes, fileName, mimeOf(fileName), receivedAt, mid)
+        val upload = fetchActFile(userId, timestampMs, mid, att) ?: return   // причина уже отправлена
+        val addresses = tx { Houses.selectAll().partition { it[Houses.id].value == houseId } }
+        val houseAddress = addresses.first.single()[Houses.address]
+
+        when (val verdict = ActFile.check(upload, houseAddress, addresses.second.map { it[Houses.address] })) {
+            is ActFileCheck.Reject -> {
+                logRejected(userId, upload, verdict.message)
+                max.sendText(userId, verdict.message)
+            }
+
+            is ActFileCheck.Confirm -> {
+                pending[userId] = Pending.ActConfirm(upload)
+                max.sendText(
+                    userId, verdict.question,
+                    listOf(listOf(cb("Да, это акт по моему дому", "act_ok")), listOf(cb("Отмена", "act_no"))),
+                )
+            }
+
+            ActFileCheck.Ok -> acceptAct(userId, houseId, upload)
+        }
+    }
+
+    // null — файл не годится как акт, председателю уже отправлено, что с ним не так
+    private suspend fun fetchActFile(
+        userId: Long, timestampMs: Long, mid: String, att: JsonObject,
+    ): ActUpload? {
+        val fileName = att["filename"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (att["type"]?.jsonPrimitive?.contentOrNull != "file" || !fileName.endsWith(".pdf", ignoreCase = true)) {
+            max.sendText(userId, NEED_PDF)
+            return null
+        }
+        val url = att["payload"]!!.jsonObject["url"]!!.jsonPrimitive.content
+        val bytes = max.download(url, ActFile.MAX_BYTES)
+        if (bytes == null) {
+            max.sendText(userId, "Файл больше ${ActFile.MAX_BYTES / BYTES_IN_MB} МБ — такой акт бот не примет.")
+        }
+        return bytes?.let { ActUpload(it, fileName, Instant.ofEpochMilli(timestampMs), mid) }
+    }
+
+    // отказ разбирают уже после демо: без причины и скора по форме непонятно, почему акт не взяли
+    private suspend fun logRejected(userId: Long, upload: ActUpload, reason: String) {
+        val score = runCatching { ActFile.formScore(ActFile.pdfText(upload.bytes)) }
+            .getOrDefault("текст не прочитан")
+        tx { logEvent(null, "ACT_FILE_REJECTED", userId, "file=${upload.fileName}; $score; reason=$reason") }
+    }
+
+    private suspend fun acceptAct(userId: Long, houseId: Long, upload: ActUpload) {
+        val actId = try {
+            acts.createFromUpload(userId, houseId, upload)
+        } catch (e: ApiError) {
+            max.sendText(userId, e.message)
+            return
+        }
         val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(cfg.zone)
         max.sendText(
-            userId, "Акт получен ${fmt.format(receivedAt)}. Когда вы получили этот акт от УК?",
+            userId, "Акт получен ${fmt.format(upload.receivedAt)}. Когда вы получили этот акт от УК?",
             listOf(listOf(cb("Сегодня", "rcv_today:$actId")), listOf(cb("Другая дата", "rcv_other:$actId"))),
         )
     }
@@ -156,6 +205,24 @@ class Bot(
         return max.messageBody("Дата получения акта зафиксирована — $date. От неё идут сроки 10 и 30 дней.")
     }
 
+    // председатель подтвердил, что акт по его дому: только теперь заводим акт и запускаем сроки
+    private suspend fun handleActConfirm(userId: Long): SendMessageRequest {
+        val upload = (pending[userId] as? Pending.ActConfirm)?.upload
+        val houseId = rolesOf(userId).houseId
+        if (upload == null || houseId == null) {
+            return max.messageBody("Этот файл уже не ждёт подтверждения — пришлите акт заново.")
+        }
+        pending.remove(userId)
+        tx { logEvent(null, "ACT_FILE_FORCED", userId, "file=${upload.fileName}") }
+        acceptAct(userId, houseId, upload)
+        return max.messageBody("Принято: загружаем акт по вашему дому.")
+    }
+
+    private fun handleActCancel(userId: Long): SendMessageRequest {
+        pending.remove(userId)
+        return max.messageBody("Загрузка отменена — акт не заведён и сроки не запущены.")
+    }
+
     private suspend fun finalizeReceipt(userId: Long, act: ResultRow) {
         val actId = act[Acts.id].value
         tx { logEvent(actId, "NOTIFY_D0", null) }
@@ -178,6 +245,8 @@ class Bot(
                 "rcv_today" -> edit = handleRcvToday(userId, arg!!.toLong())
                 "rcv_other" -> edit = handleRcvOther(userId, arg!!.toLong())
                 "act_drop" -> edit = handleActDrop(userId, arg!!.toLong())
+                "act_ok" -> edit = handleActConfirm(userId)
+                "act_no" -> edit = handleActCancel(userId)
                 // меню и статусы акта сменяют друг друга в одном сообщении: status — меню, status:<id> — акт
                 "status" -> edit = if (arg == null) menuEdit(userId) ?: run { entryPoint(userId); null }
                 else statusEdit(userId, arg.toLong()) ?: run { sendActStatus(userId, arg.toLong()); null }
