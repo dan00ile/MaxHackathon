@@ -39,7 +39,7 @@ class ReceiptDateFlowTest {
     private val today = LocalDate.now(zone)
     private var actId = 0L
 
-    private val demoAct = java.io.File("../demo/demo-act.pdf").readBytes()
+    private val demoAct = java.io.File("../demo/demo_act_1.pdf").readBytes()
     private val sent = CopyOnWriteArrayList<String>()
     private val raw = CopyOnWriteArrayList<String>()   // все тела запросов: кнопки и ответы на нажатия
     private val maxApi = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {

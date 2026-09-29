@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 // Проверка файла до того, как он станет актом: форма 761/пр и адрес дома.
 // Эталон — demo/demo-act.pdf, заполненный бланк формы по дому «г. Казань, ул. Демонстрационная, д. 1»
 class ActFileTest {
-    private val demoAct = File("../demo/demo-act.pdf").readBytes()
+    private val demoAct = File("../demo/demo_act_1.pdf").readBytes()
     private val house = "г. Казань, ул. Демонстрационная, д. 1"
 
     private fun check(
