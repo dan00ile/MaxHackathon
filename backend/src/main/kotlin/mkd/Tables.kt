@@ -19,6 +19,7 @@ object ManagementCompanies : LongIdTable("management_companies") {
     val name = text("name")
     val inn = varchar("inn", 12)
     val licenseNo = text("license_no")
+    val address = text("address").default("")          // адрес для шапки мотивированного отказа
     val representative = text("representative")        // ФИО/должность представителя (FR-G2)
     val exchangeMethod = text("exchange_method")       // согласованный способ обмена, напр. "email: uk@example.ru"
     val isDemo = bool("is_demo").default(true)
@@ -77,6 +78,8 @@ object Acts : LongIdTable("acts") {
     val recognition = enumerationByName("recognition", 16, Recognition::class)
     val previousActId = long("previous_act_id").nullable()  // цепочка кругов (FR-G5, Should) — в Must всегда null
     val round = integer("round").default(1)
+    // документ, который председатель получил как свой экземпляр. Пока нет Госключа это сам загруженный
+    // файл (filePath), а не отдельный подписанный: подписывать нечем
     val signedPdfPath = text("signed_pdf_path").nullable()
     // демо-сброс: акт убран из активного потока, но сам акт, позиции, замечания и документы сохранены
     val archivedAt = timestamp("archived_at").nullable()

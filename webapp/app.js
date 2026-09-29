@@ -541,7 +541,8 @@ function backToChatButton() {
 
 function resultBanner(act) {
   const texts = {
-    SIGNED: ["check", "Акт подписан", "Подписанный экземпляр отправлен председателю в чат — он пересылает его в УК."],
+    SIGNED: ["check", "Акт принят без возражений", "Файл акта отправлен председателю в чат — он пересылает его в УК. " +
+      "Электронной подписи на файле нет: Госключ пока не подключён."],
     REJECTED: ["cross", "Мотивированный отказ направлен", "УК должна оформить новый акт с учётом возражений. Спасибо за отметки!"],
     SILENT: ["clock", "Принят молчаливым согласием", "30 дней со дня получения истекли без подписи и отказа (п. 5 Порядка)."],
   };
@@ -803,7 +804,7 @@ async function signAct(act, btn, err) {
   const disputed = act.items.filter((i) => i.decision === "DISPUTE").length;
   const text = (act.status === "COLLECTING" ? "Сбор замечаний будет завершён. " : "") +
     (disputed ? `Оспорено позиций: ${disputed} — эти замечания в документ не попадут. ` : "") +
-    "Подписанный PDF придёт вам в чат — перешлите его в УК.";
+    "Файл акта придёт вам в чат — перешлите его в УК. Электронной подписи на нём нет: Госключ пока не подключён.";
   if (!await ask("Подписать акт без возражений?", text, "Подписать")) return;
   busy(btn, async () => {
     err.textContent = "";
@@ -811,7 +812,7 @@ async function signAct(act, btn, err) {
       state.act = await api(`/api/acts/${act.id}/sign`, { method: "POST" });
       render();
       window.scrollTo({ top: 0, behavior: "smooth" });
-      toast("Акт подписан — PDF в чате");
+      toast("Решение зафиксировано — файл акта в чате");
     } catch (e) { showError(err, e); }
   });
 }
