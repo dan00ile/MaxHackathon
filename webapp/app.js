@@ -580,7 +580,7 @@ function renderChairmanTabs(app, act) {
 
   const tabs = el("div", "tabs");
   tabs.setAttribute("role", "tablist");
-  const defs = [["checklist", "Чек-лист"], ["remarks", "Замечания"]];
+  const defs = [["checklist", "Мои отметки"], ["remarks", "Решение"]];
   if (hasRefusalTab) defs.push(["refusal", "Отказ"]);
   const buttons = defs.map(([key, title]) => {
     const b = button(title);
@@ -789,9 +789,9 @@ function decisionSummary(act) {
     const disputed = count("DISPUTE"), accepted = count("ACCEPT"), pending = act.items.length - disputed - accepted;
     stats.replaceChildren(stat(disputed, "оспорено", "issue"), stat(accepted, "принято", "ok"), stat(pending, "без решения", "pending"));
     let text;
-    if (pending) text = `Примите или оспорьте ${pending} ${plural(pending, "позицию", "позиции", "позиций")}: оспорить можно только позицию с фото.`;
-    else if (disputed) text = `Оспорено ${disputed} ${plural(disputed, "позиция", "позиции", "позиций")} — сформируйте мотивированный отказ или подпишите акт без возражений.`;
-    else text = "Все позиции приняты — акт можно подписывать.";
+    if (pending) text = `Решите по ${pending} ${plural(pending, "работе", "работам", "работам")}: каждую можно принять без возражений или оспорить. Оспорить можно только работу, к которой жители приложили фото.`;
+    else if (disputed) text = `Оспорено ${disputed} ${plural(disputed, "работа", "работы", "работ")} — сформируйте мотивированный отказ или подпишите акт без возражений.`;
+    else text = "Все работы приняты — акт можно подписывать.";
     if (act.status === "COLLECTING") text = "Сбор ещё идёт — жители могут добавлять отметки. " + text;
     hint.textContent = text;
   }
@@ -858,8 +858,8 @@ function renderRemarksItem(item, err, onDecided) {
   });
 
   const decisionRow = el("div", "segmented");
-  const acceptBtn = iconButton("check", "Принять");
-  const disputeBtn = iconButton("alert", "Оспорить", "negative");
+  const acceptBtn = iconButton("check", "Принять работу");
+  const disputeBtn = iconButton("alert", "Оспорить работу", "negative");
   decisionRow.append(acceptBtn, disputeBtn);
   card.appendChild(decisionRow);
 
@@ -900,6 +900,8 @@ function renderRemarksItem(item, err, onDecided) {
 
 function renderChecklist(app, act) {
   const editable = act.status === "COLLECTING";
+  if (act.isChairman) app.appendChild(el("p", "summary-hint",
+    "Здесь вы отмечаете работы как житель дома — наравне с соседями. Решение по акту — во вкладке «Решение»."));
   if (act.isResident && editable) app.appendChild(progressCard(act));
   else app.appendChild(el("p", "section-title", editable ? "Отметьте каждую работу" : "Сбор замечаний закрыт"));
   act.items.forEach((item) => app.appendChild(renderChecklistItem(item, editable)));
