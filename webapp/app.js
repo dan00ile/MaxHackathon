@@ -1045,7 +1045,6 @@ function renderChecklistItem(item, editable) {
     const fileInput = el("input");
     fileInput.type = "file";
     fileInput.accept = "image/*";
-    fileInput.capture = "environment";
     fileInput.hidden = true;
     const tile = el("label", "photo-add"); // label сам открывает выбор файла — без вложенной кнопки
     tile.innerHTML = ICON.camera;
