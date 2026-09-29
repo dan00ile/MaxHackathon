@@ -246,6 +246,7 @@ body {
 .hero-back svg { width: 18px; height: 18px; }
 .hero-back:active { background: rgb(255 255 255 / 0.24); }
 .hero-back.is-busy { --spin: #fff; }
+.hero-delete { display: flex; width: fit-content; margin: 14px 0 0 -8px; padding: 0 12px; }
 
 .hero-sub { margin: -4px 0 0; font-size: 14px; opacity: 0.85; }
 

@@ -144,6 +144,17 @@ class ActService(
         }
     }
 
+    // «удаление» председателем — тот же архив: акт пропадает из списков и таймеров, данные и журнал остаются
+    suspend fun delete(actId: Long, userId: Long) {
+        requireChairmanOf(actId, userId)
+        tx {
+            val archived = Acts.update({ (Acts.id eq actId) and Acts.archivedAt.isNull() }) {
+                it[archivedAt] = Instant.now()
+            }
+            if (archived > 0) logEvent(actId, "ACT_ARCHIVED", userId, "reason=deleted")
+        }
+    }
+
     suspend fun requireChairmanOf(actId: Long, userId: Long): ResultRow = tx {
         val act = Acts.selectAll().where { Acts.id eq actId }.singleOrNull()
             ?: throw ApiError(HttpStatusCode.NotFound, "not_found", "Акт не найден")

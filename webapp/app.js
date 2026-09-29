@@ -421,6 +421,20 @@ function renderHeader(act) {
     }
   }
 
+  if (act.isChairman) {
+    const del = button("Удалить акт", "hero-back hero-delete");
+    del.onclick = async () => {
+      if (!await ask("Удалить акт?", "Он пропадёт из списка актов, напоминаний по нему не будет. Замечания жителей и документы сохранятся в архиве.", "Удалить", "btn-negative")) return;
+      busy(del, async () => {
+        try {
+          await api(`/api/acts/${act.id}/delete`, { method: "POST" });
+          await showList();
+          toast("Акт удалён");
+        } catch (e) { toast(e.message); }
+      });
+    };
+    inner.appendChild(del);
+  }
 }
 
 function heroShell() {

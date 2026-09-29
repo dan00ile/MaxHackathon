@@ -377,6 +377,13 @@ fun Route.api(cfg: Config, max: MaxBotClient, acts: ActService, remarks: RemarkS
         call.respond(actDto(cfg, actId, auth.userId))
     }
 
+    // POST, а не DELETE: CORS мини-аппа и так разрешает POST
+    post("/api/acts/{id}/delete") {
+        val auth = call.authUser(cfg)
+        acts.delete(call.parameters["id"]!!.toLong(), auth.userId)
+        call.respond(HttpStatusCode.NoContent)
+    }
+
     put("/api/items/{itemId}/decision") {
         val auth = call.authUser(cfg)
         val itemId = call.parameters["itemId"]!!.toLong()

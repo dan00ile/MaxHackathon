@@ -257,6 +257,12 @@ class Bot(
                 "refuse" -> handleRefuse(userId, arg!!.toLong())
                 "sent" -> handleSent(userId, arg!!.toLong())
                 "reset_ok" -> handleResetOk(userId)
+                "del" -> edit = max.messageBody(
+                    "Удалить акт? Он пропадёт из списка актов, напоминаний по нему не будет. " +
+                        "Замечания жителей и документы сохранятся в архиве.",
+                    listOf(listOf(cb("Да, удалить", "del_ok:$arg")), listOf(cb("Отмена", "status:$arg"))),
+                )
+                "del_ok" -> edit = handleActDelete(userId, arg!!.toLong())
             }
         }.onFailure { log.error("callback {}", callback.payload, it) }
         val answered = runCatching { max.answerCallback(callback.callbackId, if (edit == null) "ок" else null, edit) }
@@ -452,6 +458,17 @@ class Bot(
         pending.remove(userId, Pending.ReceiptDate(actId))
         entryPoint(userId)
         return max.messageBody("Акт убран в архив: по нему не будет напоминаний и он не появится в списке актов.")
+    }
+
+    private suspend fun handleActDelete(userId: Long, actId: Long): SendMessageRequest {
+        try {
+            acts.delete(actId, userId)
+        } catch (e: ApiError) {
+            return max.messageBody(e.message)
+        }
+        pending.remove(userId, Pending.ReceiptDate(actId))
+        entryPoint(userId)
+        return max.messageBody("Акт удалён.")
     }
 
     private suspend fun handleClose(userId: Long, actId: Long) {
