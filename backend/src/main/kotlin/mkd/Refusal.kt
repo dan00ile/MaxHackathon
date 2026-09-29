@@ -263,6 +263,7 @@ class RefusalService(
             RefusalPdfData(
                 houseAddress = house[Houses.address],
                 ukName = uk[ManagementCompanies.name],
+                ukAddress = uk[ManagementCompanies.address],
                 ukRepresentative = uk[ManagementCompanies.representative],
                 exchangeMethod = uk[ManagementCompanies.exchangeMethod],
                 actNumber = act[Acts.number],

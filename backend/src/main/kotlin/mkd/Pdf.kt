@@ -4,6 +4,7 @@ import com.lowagie.text.Document
 import com.lowagie.text.Element
 import com.lowagie.text.Font
 import com.lowagie.text.Image
+import com.lowagie.text.PageSize
 import com.lowagie.text.Paragraph
 import com.lowagie.text.pdf.BaseFont
 import com.lowagie.text.pdf.PdfPCell
@@ -35,7 +36,8 @@ data class PhotoPage(
 )
 
 data class RefusalPdfData(
-    val houseAddress: String, val ukName: String, val ukRepresentative: String, val exchangeMethod: String,
+    val houseAddress: String, val ukName: String, val ukAddress: String,
+    val ukRepresentative: String, val exchangeMethod: String,
     val actNumber: String?, val formedDate: LocalDate?, val period: String?,
     val objections: List<Objection>, val noObjectionLineNos: List<Int>,
     val photos: List<PhotoPage>,
@@ -46,6 +48,39 @@ private val dateFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy
 private val dateTimeFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
 
 private const val ORDER_318 = "приказом Минстроя России от 22.05.2026 № 318/пр"
+
+// Пункт Порядка, по которому УК оформляет новый акт ({{ПУНКТ_ПОРЯДКА_НОВОГО_АКТА}} в шаблоне)
+private const val NEW_ACT_CLAUSE = "6"
+
+// Times New Roman в репозиторий положить нельзя (проприетарный шрифт Monotype, а деплой — Linux-контейнер
+// без MS-шрифтов), поэтому встроен Tinos: метрически идентичный клон TNR под OFL. Проверено — у всех
+// используемых в документе символов ширины совпадают с times.ttf/timesbd.ttf до единицы, значит переносы
+// строк и вид текста те же, что в шаблоне.
+private const val TIMES = "Tinos-Regular.ttf"
+private const val TIMES_BOLD = "Tinos-Bold.ttf"
+
+// Геометрия снята с docs/Шаблон_мотивированного_отказа.pdf: A4, поля в один дюйм, основной текст 10.08 pt,
+// заголовок 13.92 pt полужирный. Интерлиньяж и отбивки — измеренные расстояния между базовыми линиями.
+private const val MARGIN = 72f
+
+// Верхнее поле подобрано, а не взято равным MARGIN: OpenPDF опускает первую строку на полный интерлиньяж
+// от поля, а Word (в котором сделан шаблон) — на высоту прописной. Без поправки весь текст уезжает на
+// 4.3 pt вниз относительно шаблона. 842 − 67.76 − HEADER_LEADING = 760.8 — базовая линия как в шаблоне.
+private const val MARGIN_TOP = 67.76f
+private const val BODY_SIZE = 10.08f
+private const val TITLE_SIZE = 13.92f
+private const val BODY_LEADING = 11.52f
+private const val HEADER_LEADING = 13.44f
+private const val TITLE_LEADING = 16.08f
+private const val TITLE_GAP = 14.43f      // от последней строки шапки до заголовка
+private const val TITLE_TO_BODY = 15.84f
+private const val PARA_GAP = 10.08f       // пустая строка между абзацами
+private const val BULLET_GAP = 2.88f      // между строками внутри блока позиции
+private const val BULLET_INDENT = 19.92f  // отбивка блока позиции от левого поля
+// Заголовок в шаблоне сужен относительно основного текста, из-за этого он рвётся после «оказанных»,
+// а не после «услуг». Ширина колонки заголовка в шаблоне — между 413 и 449 pt, берём середину
+private const val TITLE_INDENT = 14f
+private const val SIGN_GAP = 18.26f       // от текста до подписной части
 
 private val months = listOf(
     "январь", "февраль", "март", "апрель", "май", "июнь",
@@ -138,29 +173,51 @@ object Pdf {
         return out.toByteArray()
     }
 
-    // Структура — по шаблону мотивированного отказа (Шаблон_мотивированного_отказа.docx): шапка «кому/от кого»,
-    // вводный абзац по п. 4 Порядка, блок на каждую спорную позицию, просьба оформить новый акт по п. 6, подпись.
-    // Сверх шаблона — обязательные реквизиты FR-G2: способ уведомления УК, место составления, реестр фото
+    // Документ повторяет docs/Шаблон_мотивированного_отказа.pdf и по тексту, и по виду: шапка «кому/от кого»,
+    // вводный абзац по п. 4 Порядка, блок на каждую спорную позицию, просьба оформить новый акт, подпись.
+    // Формулировки шаблона править только вместе с самим шаблоном — RefusalTemplateConformanceTest читает
+    // его файл и сверяет постоянный текст. Сверх шаблона — обязательные реквизиты FR-G2: уведомление УК
+    // с её представителем, место составления, реестр фото и страницы-приложения (FR-G2.1)
     fun refusal(d: RefusalPdfData): ByteArray {
-        val bold = font("DejaVuSans-Bold.ttf", 14f)
-        val regular = font("DejaVuSans.ttf", 11f)
-        val small = font("DejaVuSans.ttf", 9f)
-        val labelFont = font("DejaVuSans-Bold.ttf", 11f)
+        val regular = font(TIMES, BODY_SIZE)
+        val labelFont = font(TIMES_BOLD, BODY_SIZE)
+        val bold = font(TIMES_BOLD, TITLE_SIZE)
+        val small = font(TIMES, 9f)
 
         val out = ByteArrayOutputStream()
-        val document = Document()
+        val document = Document(PageSize.A4, MARGIN, MARGIN, MARGIN_TOP, MARGIN)
         PdfWriter.getInstance(document, out)
         document.open()
-        fun para(text: String, font: Font = regular, align: Int = Element.ALIGN_LEFT, before: Float = 0f) =
-            document.add(Paragraph(text, font).apply { alignment = align; spacingBefore = before })
+        fun para(
+            text: String,
+            font: Font = regular,
+            align: Int = Element.ALIGN_JUSTIFIED,
+            before: Float = 0f,
+            leading: Float = BODY_LEADING,
+            indent: Float = 0f,
+            indentRight: Float = 0f,
+        ) = document.add(
+            Paragraph(text, font).apply {
+                alignment = align
+                spacingBefore = before
+                indentationLeft = indent
+                indentationRight = indentRight
+                setLeading(leading, 0f)
+            },
+        )
 
-        listOf("В ${d.ukName}", d.ukRepresentative, d.exchangeMethod).forEach { para(it, align = Element.ALIGN_RIGHT) }
-        para("от председателя совета многоквартирного дома", align = Element.ALIGN_RIGHT, before = 6f)
-        para("${d.chairmanFio}, ${d.houseAddress}", align = Element.ALIGN_RIGHT)
+        // Шапка «кому / от кого» — четыре строки по правому краю, как в шаблоне
+        listOfNotNull(
+            "В ${d.ukName}",
+            d.ukAddress.ifBlank { null },
+            "от председателя совета многоквартирного дома",
+            "${d.chairmanFio}, ${d.houseAddress}",
+        ).forEach { para(it, align = Element.ALIGN_RIGHT, leading = HEADER_LEADING) }
 
         para(
             "Мотивированный отказ от подписания акта приёмки оказанных услуг (выполненных работ)",
-            bold, Element.ALIGN_CENTER, before = 18f,
+            bold, Element.ALIGN_CENTER, before = TITLE_GAP, leading = TITLE_LEADING,
+            indent = TITLE_INDENT, indentRight = TITLE_INDENT,
         )
         val actDate = d.formedDate?.let { " от ${it.format(dateFmt)}" } ?: ""
         para(
@@ -168,52 +225,59 @@ object Pdf {
                 "акта приёмки оказанных услуг (выполненных работ) № ${d.actNumber ?: "без номера"}$actDate " +
                 "по содержанию и текущему ремонту общего имущества многоквартирного дома по адресу: " +
                 "${d.houseAddress}, ${periodPhrase(d.period)}.",
-            before = 12f,
+            before = TITLE_TO_BODY,
         )
         para(
             "Отказ от подписания акта мотивирован следующими аргументированными возражениями против его содержания, " +
                 "установленными на основании опроса собственников и пользователей помещений многоквартирного дома:",
-            before = 6f,
+            before = PARA_GAP,
         )
 
         d.objections.forEach { o ->
-            para("${o.lineNo}. ${o.itemName}", labelFont, before = 10f)
-            para("Указано в акте: ${sentence(o.actWording.ifBlank { "«${o.itemName}»" })}")
-            para(
+            para("${o.lineNo}. ${o.itemName}", labelFont, Element.ALIGN_LEFT, before = PARA_GAP)
+            val bullet = { text: String -> para(text, before = BULLET_GAP, indent = BULLET_INDENT) }
+            bullet("Указано в акте: ${sentence(o.actWording.ifBlank { "«${o.itemName}»" })}")
+            bullet(
                 "По данным опроса жильцов: ${o.fact.trimEnd().trimEnd('.')} (отметили выполнение — " +
                     "${o.okCount} из ${o.okCount + o.issueCount} опрошенных).",
             )
             val appendixNos = d.photos.filter { it.lineNo == o.lineNo }.map { it.registryNo }
-            para(
+            bullet(
                 "Приложены фотоматериалы: " +
                     if (appendixNos.isEmpty()) "нет." else "приложения № ${appendixNos.joinToString(", ")}.",
             )
-            para("Возражение: ${sentence(o.demand)}")
+            bullet("Возражение: ${sentence(o.demand)}")
         }
 
         if (d.noObjectionLineNos.isNotEmpty()) {
-            para("По позициям № ${d.noObjectionLineNos.joinToString(", ")} возражений не имеется.", before = 10f)
+            para("По позициям № ${d.noObjectionLineNos.joinToString(", ")} возражений не имеется.", before = PARA_GAP)
         }
+        // сверх шаблона, но обязательно по FR-G2: представитель УК и факт уведомления об отказе.
+        // Стоит до просительной части, чтобы в шаблонном порядке за ней сразу шла подписная часть
+        para(
+            "Настоящий отказ направляется исполнителю (${d.ukRepresentative}): ${d.exchangeMethod}.",
+            before = PARA_GAP,
+        )
         para(
             "На основании изложенного прошу устранить указанные замечания и оформить новый акт приёмки в порядке, " +
-                "установленном пунктом 6 Порядка, утверждённого $ORDER_318.",
-            before = 10f,
+                "установленном пунктом $NEW_ACT_CLAUSE Порядка, утверждённого $ORDER_318.",
+            before = PARA_GAP,
         )
-        para("Настоящий отказ направляется исполнителю: ${d.exchangeMethod}.", before = 6f)
 
-        para("Дата: ${d.composedAt.format(dateFmt)}", before = 18f)
-        para("Место составления: ${d.place}")
-        para("Председатель совета МКД: ${d.chairmanFio}")
-        para("Подпись: _______________", before = 6f)
+        val sign = { text: String, before: Float ->
+            para(text, align = Element.ALIGN_LEFT, before = before, leading = HEADER_LEADING)
+        }
+        sign("Дата: ${d.composedAt.format(dateFmt)}", SIGN_GAP)
+        sign("Место составления: ${d.place}", 0f)
+        sign("Председатель совета МКД: ${d.chairmanFio}", 0f)
+        sign("Подпись: _______________", 0f)
 
         if (d.demo) {
-            document.add(Paragraph(" "))
-            val demoNote = Paragraph(
+            para(
                 "Демо-режим: документ сформирован без квалифицированной электронной подписи (Госключ не подключён). " +
-                        "Сведения об УК и справочник оснований — демонстрационные.",
-                Font(small.baseFont, small.size, Font.ITALIC),
+                    "Сведения об УК и справочник оснований — демонстрационные.",
+                small, Element.ALIGN_LEFT, before = PARA_GAP, leading = 10.5f,
             )
-            document.add(demoNote)
         }
 
         if (d.photos.isNotEmpty()) appendix(document, d.photos, bold, regular, labelFont)
