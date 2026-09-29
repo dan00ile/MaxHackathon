@@ -77,6 +77,8 @@ object Acts : LongIdTable("acts") {
     val recognition = enumerationByName("recognition", 16, Recognition::class)
     val previousActId = long("previous_act_id").nullable()  // цепочка кругов (FR-G5, Should) — в Must всегда null
     val round = integer("round").default(1)
+    // документ, который председатель получил как свой экземпляр. Пока нет Госключа это сам загруженный
+    // файл (filePath), а не отдельный подписанный: подписывать нечем
     val signedPdfPath = text("signed_pdf_path").nullable()
     // демо-сброс: акт убран из активного потока, но сам акт, позиции, замечания и документы сохранены
     val archivedAt = timestamp("archived_at").nullable()
