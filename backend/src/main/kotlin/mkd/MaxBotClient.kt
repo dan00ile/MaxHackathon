@@ -13,7 +13,9 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
+import io.ktor.utils.io.readRemaining
 import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
@@ -25,6 +27,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.io.readByteArray
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -213,7 +216,12 @@ class MaxBotClient(private val token: String, private val base: String) {
         return true
     }
 
-    suspend fun download(url: String): ByteArray = http.get(url).body()
+    // null — файл больше лимита. Читаем на байт больше лимита и обрываем: иначе присланный в чат
+    // многогигабайтный файл целиком уедет в память бота
+    suspend fun download(url: String, limit: Long): ByteArray? {
+        val bytes = http.get(url).bodyAsChannel().readRemaining(limit + 1).readByteArray()
+        return bytes.takeIf { it.size <= limit }
+    }
 
     suspend fun subscriptions(): List<String> {
         val response: SubscriptionsResponse = http.get("$base/subscriptions") {

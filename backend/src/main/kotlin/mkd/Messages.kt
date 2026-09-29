@@ -50,7 +50,7 @@ private const val MENU_ACTS_LIMIT = 5
 // конкретный акт — поэтому сообщение в чате не устаревает, когда в доме появляется новый акт
 fun menuText(acts: List<ResultRow>, isChairman: Boolean): String {
     val head =
-        if (isChairman) "Акт присылайте сюда файлом — PDF или фото. Можно несколько: каждый ведётся отдельно."
+        if (isChairman) "Акт присылайте сюда файлом PDF. Можно несколько: каждый ведётся отдельно."
         else "Отслеживайте здесь проверку актов работ по вашему дому."
     if (acts.isEmpty()) return head
     val lines = acts.take(MENU_ACTS_LIMIT).joinToString("\n") { "• ${actTitle(it)} — ${statusRu[it[Acts.status]]}" }
