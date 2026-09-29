@@ -62,9 +62,7 @@ class RefusalDraftTest {
         assertEquals("за период —", periodPhrase(null))
     }
 
-    // PDF собирается по шаблону мотивированного отказа — проверяем по извлечённому тексту
-    @Test
-    fun `refusal pdf follows the template`() {
+    private fun refusalData(ukAddress: String = "420000, г. Казань, ул. Управляющая, д. 10"): RefusalPdfData {
         val objection = buildDraft(
             listOf(
                 DraftItem(
@@ -75,22 +73,28 @@ class RefusalDraftTest {
             ),
             grounds,
         ).objections.single()
-        val bytes = Pdf.refusal(
-            RefusalPdfData(
-                houseAddress = "г. Казань, ул. Демонстрационная, д. 1", ukName = "ООО «УК Тест»",
-                ukRepresentative = "Директор Петров П. П.", exchangeMethod = "email: uk@test.ru",
-                actNumber = "12", formedDate = LocalDate.of(2026, 9, 30), period = "сентябрь 2026",
-                objections = listOf(objection), noObjectionLineNos = listOf(1, 2), photos = emptyList(),
-                chairmanFio = "Сидоров С. С.", place = "г. Казань",
-                composedAt = ZonedDateTime.of(2026, 10, 2, 12, 0, 0, 0, ZoneId.of("Europe/Moscow")), demo = false,
-            ),
+        return RefusalPdfData(
+            houseAddress = "г. Казань, ул. Демонстрационная, д. 1", ukName = "ООО «УК Тест»",
+            ukAddress = ukAddress,
+            ukRepresentative = "Директор Петров П. П.", exchangeMethod = "email: uk@test.ru",
+            actNumber = "12", formedDate = LocalDate.of(2026, 9, 30), period = "сентябрь 2026",
+            objections = listOf(objection), noObjectionLineNos = listOf(1, 2), photos = emptyList(),
+            chairmanFio = "Сидоров С. С.", place = "г. Казань",
+            composedAt = ZonedDateTime.of(2026, 10, 2, 12, 0, 0, 0, ZoneId.of("Europe/Moscow")), demo = false,
         )
+    }
+
+    // PDF собирается по шаблону мотивированного отказа — проверяем по извлечённому тексту
+    @Test
+    fun `refusal pdf follows the template`() {
+        val bytes = Pdf.refusal(refusalData())
         val reader = PdfReader(bytes)
         val text = (1..reader.numberOfPages).joinToString("\n") { PdfTextExtractor(reader).getTextFromPage(it) }
             .replace(Regex("\\s+"), " ")
 
         listOf(
             "В ООО «УК Тест»",
+            "420000, г. Казань, ул. Управляющая, д. 10",
             "от председателя совета многоквартирного дома",
             "Сидоров С. С., г. Казань, ул. Демонстрационная, д. 1",
             "Мотивированный отказ от подписания акта приёмки оказанных услуг (выполненных работ)",
@@ -103,10 +107,23 @@ class RefusalDraftTest {
             "Возражение: Работа не выполнена или выполнена с недостатками",
             "По позициям № 1, 2 возражений не имеется.",
             "установленном пунктом 6 Порядка",
+            // представитель УК — реквизит FR-G2, в шаблоне его нет: ушёл в строку про уведомление
+            "Настоящий отказ направляется исполнителю (Директор Петров П. П.): email: uk@test.ru.",
+            "Место составления: г. Казань",
             "Дата: 02.10.2026",
             "Председатель совета МКД: Сидоров С. С.",
             "Подпись: _______________",
         ).forEach { assertContains(text, it) }
+    }
+
+    // На стенде, поднятом до появления колонки, адрес УК пустой (default "") — пустая строка в шапку не лезет
+    @Test
+    fun `blank uk address leaves no empty header line`() {
+        val bytes = Pdf.refusal(refusalData(ukAddress = ""))
+        val lines = PdfTextExtractor(PdfReader(bytes)).getTextFromPage(1).lines().map { it.trim() }
+        val ukLine = lines.indexOfFirst { it == "В ООО «УК Тест»" }
+        assertTrue(ukLine >= 0, "строка с названием УК не найдена: $lines")
+        assertEquals("от председателя совета многоквартирного дома", lines[ukLine + 1])
     }
 
     @Test
