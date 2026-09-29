@@ -46,11 +46,18 @@ fun statusText(act: ResultRow, address: String, now: Instant, zone: ZoneId, even
 
 private const val MENU_ACTS_LIMIT = 5
 
+// проверяющему негде взять акт по форме 761/пр с адресом демо-дома — даём готовый
+private const val DEMO_HINT = "\n\nДемо: нет акта под рукой? Скачайте пример — " +
+    "https://github.com/dan00ile/MaxHackathon/raw/master/demo/demo-act.pdf (акт по дому " +
+    "«ул. Демонстрационная, д. 1») и пришлите его сюда. /shift N — сдвинуть сроки акта на N дней, " +
+    "/reset — начать заново."
+
 // Меню: приветствие + короткая сводка по актам дома. Ссылка в меню ведёт на список актов, а не на
 // конкретный акт — поэтому сообщение в чате не устаревает, когда в доме появляется новый акт
-fun menuText(acts: List<ResultRow>, isChairman: Boolean): String {
+fun menuText(acts: List<ResultRow>, isChairman: Boolean, demo: Boolean = false): String {
     val head =
-        if (isChairman) "Акт присылайте сюда файлом PDF. Можно несколько: каждый ведётся отдельно."
+        if (isChairman) "Акт присылайте сюда файлом PDF. Можно несколько: каждый ведётся отдельно." +
+            (if (demo) DEMO_HINT else "")
         else "Отслеживайте здесь проверку актов работ по вашему дому."
     if (acts.isEmpty()) return head
     val lines = acts.take(MENU_ACTS_LIMIT).joinToString("\n") { "• ${actTitle(it)} — ${statusRu[it[Acts.status]]}" }

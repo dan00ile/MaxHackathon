@@ -582,7 +582,7 @@ class Bot(
 
     private suspend fun menuMessage(userId: Long, houseId: Long): SendMessageRequest {
         val houseActs = tx { houseActsTx(houseId) }
-        return max.messageBody(menuText(houseActs, rolesOf(userId).chairman), menuButtons(houseActs))
+        return max.messageBody(menuText(houseActs, rolesOf(userId).chairman, cfg.demoMode), menuButtons(houseActs))
     }
 
     // «‹ Все акты» из статуса акта: меню заменяет это же сообщение; null — дома нет, отвечаем как /start
