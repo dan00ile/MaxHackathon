@@ -111,7 +111,7 @@ class StatusMessageTest {
     @Test
     fun `menu without acts is just the greeting`() {
         assertEquals(
-            "Акт присылайте сюда файлом — PDF или фото. Можно несколько: каждый ведётся отдельно.",
+            "Акт присылайте сюда файлом PDF. Можно несколько: каждый ведётся отдельно.",
             menuText(emptyList(), isChairman = true),
         )
         assertEquals(emptyList(), menuButtons(emptyList()))
