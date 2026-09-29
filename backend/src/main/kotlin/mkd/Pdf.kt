@@ -17,19 +17,6 @@ import java.time.YearMonth
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-data class ItemRow(val lineNo: Int, val name: String, val periodicity: String, val volume: String, val cost: String)
-data class SignedActData(
-    val houseAddress: String,
-    val ukName: String,
-    val actNumber: String?,
-    val formedDate: LocalDate?,
-    val period: String?,
-    val items: List<ItemRow>,
-    val chairmanFio: String,
-    val signedAt: ZonedDateTime,
-    val demo: Boolean,
-)
-
 data class PhotoPage(
     val registryNo: Int, val lineNo: Int, val itemName: String, val author: String,
     val uploadedAt: ZonedDateTime, val file: File,
@@ -111,67 +98,6 @@ object Pdf {
     }
 
     fun font(name: String, size: Float): Font = Font(baseFont(name), size)
-
-    fun signedAct(d: SignedActData): ByteArray {
-        val bold = font("DejaVuSans-Bold.ttf", 14f)
-        val regular = font("DejaVuSans.ttf", 11f)
-        val small = font("DejaVuSans.ttf", 9f)
-
-        val out = ByteArrayOutputStream()
-        val document = Document()
-        PdfWriter.getInstance(document, out)
-        document.open()
-
-        document.add(
-            Paragraph(
-                "Экземпляр акта приёмки оказанных услуг и (или) выполненных работ по содержанию и " +
-                        "текущему ремонту общего имущества в многоквартирном доме",
-                bold,
-            ),
-        )
-        document.add(Paragraph(" "))
-        document.add(
-            Paragraph(
-                "Акт № ${d.actNumber ?: "без номера"} от ${d.formedDate?.format(dateFmt) ?: "—"} за ${d.period ?: "—"}",
-                regular
-            )
-        )
-        document.add(Paragraph("Адрес: ${d.houseAddress}", regular))
-        document.add(Paragraph("Исполнитель: ${d.ukName}", regular))
-        document.add(Paragraph(" "))
-
-        val table = PdfPTable(5)
-        table.widthPercentage = 100f
-        listOf("№", "Наименование", "Периодичность", "Ед. изм./объём", "Стоимость, руб.").forEach {
-            table.addCell(PdfPCell(Paragraph(it, bold)))
-        }
-        d.items.forEach { item ->
-            table.addCell(PdfPCell(Paragraph(item.lineNo.toString(), regular)))
-            table.addCell(PdfPCell(Paragraph(item.name, regular)))
-            table.addCell(PdfPCell(Paragraph(item.periodicity, regular)))
-            table.addCell(PdfPCell(Paragraph(item.volume, regular)))
-            table.addCell(PdfPCell(Paragraph(item.cost, regular)))
-        }
-        document.add(table)
-        document.add(Paragraph(" "))
-
-        document.add(Paragraph("Акт подписан председателем совета многоквартирного дома без возражений.", regular))
-        document.add(Paragraph("Председатель совета МКД: ${d.chairmanFio} ____________", regular))
-        document.add(Paragraph("Дата и время подписания: ${d.signedAt.format(dateTimeFmt)}", regular))
-
-        if (d.demo) {
-            document.add(Paragraph(" "))
-            val demoNote = Paragraph(
-                "Демо-режим: документ сформирован без квалифицированной электронной подписи (Госключ не подключён).",
-                Font(small.baseFont, small.size, Font.ITALIC),
-            )
-            demoNote.alignment = Element.ALIGN_LEFT
-            document.add(demoNote)
-        }
-
-        document.close()
-        return out.toByteArray()
-    }
 
     // Документ повторяет docs/Шаблон_мотивированного_отказа.pdf и по тексту, и по виду: шапка «кому/от кого»,
     // вводный абзац по п. 4 Порядка, блок на каждую спорную позицию, просьба оформить новый акт, подпись.

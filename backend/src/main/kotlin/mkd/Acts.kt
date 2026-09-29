@@ -266,51 +266,28 @@ class ActService(
         val house = tx { Houses.selectAll().where { Houses.id eq houseId }.single() }
         val uk =
             tx { ManagementCompanies.selectAll().where { ManagementCompanies.id eq house[Houses.ukId].value }.single() }
-        val chairman =
-            tx { Chairmen.selectAll().where { (Chairmen.userId eq userId) and (Chairmen.houseId eq houseId) }.single() }
-        val items = tx {
-            ActItems.selectAll().where { ActItems.actId eq actId }.orderBy(ActItems.lineNo to SortOrder.ASC).toList()
-        }
 
-        val signedAt = ZonedDateTime.now(cfg.zone)
-        val bytes = Pdf.signedAct(
-            SignedActData(
-                houseAddress = house[Houses.address],
-                ukName = uk[ManagementCompanies.name],
-                actNumber = act[Acts.number],
-                formedDate = act[Acts.formedDate],
-                period = act[Acts.period],
-                items = items.map {
-                    ItemRow(
-                        it[ActItems.lineNo],
-                        it[ActItems.name],
-                        it[ActItems.periodicity],
-                        it[ActItems.volume],
-                        it[ActItems.cost]
-                    )
-                },
-                chairmanFio = chairman[Chairmen.fullName],
-                signedAt = signedAt,
-                demo = cfg.demoMode,
-            ),
-        )
-        val dir = Path.of(cfg.filesDir, "pdf")
-        Files.createDirectories(dir)
-        val pdfPath = dir.resolve("act-$actId-signed.pdf")
-        Files.write(pdfPath, bytes)
+        // Подписывать пока нечем: Госключ не подключён, а рисовать свой «подписанный экземпляр» — выдавать
+        // за подпись то, что подписью не является. Поэтому возвращаем ровно тот файл, который загрузил
+        // председатель, и честно говорим, что подписи на нём нет. Когда появится Госключ, сюда встанет
+        // отправка этого же файла на подпись и приём подписанного результата.
+        val fileName = act[Acts.fileName]
+        val bytes = Files.readAllBytes(Path.of(act[Acts.filePath]))
 
         tx {
             Acts.update({ Acts.id eq actId }) {
-                it[signedPdfPath] = pdfPath.toString()
+                it[signedPdfPath] = act[Acts.filePath]
                 it[status] = ActStatus.SIGNED
             }
-            logEvent(actId, "SIGNED", userId, "stub=true")
+            logEvent(actId, "SIGNED", userId, "stub=true; returned=original")
         }
 
         val number = act[Acts.number] ?: "без номера"
         max.sendFile(
-            userId, bytes, "akt-$number-podpisan.pdf",
-            "Акт подписан. Перешлите этот файл в УК (${uk[ManagementCompanies.exchangeMethod]}) — это ваш подписанный экземпляр.",
+            userId, bytes, fileName,
+            "Акт № $number принят без возражений, решение зафиксировано. Электронной подписи на файле нет: " +
+                "Госключ пока не подключён, поэтому это ваш исходный акт без изменений. Перешлите его в УК " +
+                "(${uk[ManagementCompanies.exchangeMethod]}) тем способом, который с ней согласован.",
         )
         val residents =
             tx { Users.selectAll().where { (Users.houseId eq houseId) and (Users.id neq userId) }.map { it[Users.id] } }
