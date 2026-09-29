@@ -246,3 +246,11 @@ docker compose down          # остановить, данные (Postgres + ф
 docker compose up -d         # запустить снова с сохранёнными данными
 docker compose down -v       # остановить и полностью очистить данные (pgdata, files)
 ```
+---
+### Демо прохождения первого сценария из раздела "Пошаговый сценарий проверки"
+
+
+https://github.com/user-attachments/assets/1d7d351e-2c20-454f-af65-74444cd79894
+
+
+
