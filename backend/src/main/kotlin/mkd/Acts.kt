@@ -322,7 +322,12 @@ class ActService(
             val bytes = Files.readAllBytes(Path.of(act[Acts.filePath]))
             // текст из акта — чужой ввод в промпте: обрезаем, а результат всё равно валидируется parseRecognized
             val text = ActFile.pdfText(bytes).take(ActFile.MAX_TEXT_CHARS)
-            parseRecognized(gigaChat.chat(systemRecognizePrompt(validKinds), "Текст акта:\n$text"), validKinds)
+            val logRetry: suspend (Int, Throwable) -> Unit = { n, e ->
+                tx { logEvent(actId, "RECOGNITION_RETRY", null, "attempt=$n; ${e.message ?: e}") }
+            }
+            withRetries(logRetry) {
+                parseRecognized(gigaChat.chat(systemRecognizePrompt(validKinds), "Текст акта:\n$text"), validKinds)
+            }
         }
 
         recognized.onSuccess { r ->
@@ -456,10 +461,27 @@ private fun systemRecognizePrompt(validKinds: Set<String>): String = """
     Если поля нет в акте — пустая строка. Ничего не придумывай.
 """.trimIndent()
 
+private const val RECOGNIZE_ATTEMPTS = 3
+private const val RECOGNIZE_RETRY_DELAY_MS = 2_000L
+
+// LLM время от времени отвечает не JSON или пустым списком, GigaChat — таймаутом/5xx:
+// повторяем с растущей паузой, прежде чем отправлять председателя вводить позиции вручную
+private suspend fun <T> withRetries(onRetry: suspend (Int, Throwable) -> Unit, block: suspend () -> T): T {
+    for (attempt in 1 until RECOGNIZE_ATTEMPTS) {
+        runCatching { return block() }.onFailure { e ->
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            onRetry(attempt, e)
+            kotlinx.coroutines.delay(RECOGNIZE_RETRY_DELAY_MS * attempt)
+        }
+    }
+    return block()
+}
+
 private fun parseRecognized(content: String, validKinds: Set<String>): RecognizedAct {
     val start = content.indexOf('{')
     val end = content.lastIndexOf('}')
     check(start >= 0 && end > start) { "LLM не вернул JSON" }
     val raw = AppJson.decodeFromString<RecognizedAct>(content.substring(start, end + 1))
+    check(raw.items.isNotEmpty()) { "LLM не нашёл ни одной позиции" }
     return raw.copy(items = raw.items.map { if (it.workKind !in validKinds) it.copy(workKind = "OTHER") else it })
 }
