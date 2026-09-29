@@ -1,3 +1,4 @@
 build
 .gradle
 detekt-baseline.xml
+.kotlin
