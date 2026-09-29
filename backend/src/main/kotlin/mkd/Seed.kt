@@ -12,6 +12,7 @@ object Seed {
             it[name] = "ООО «УК Демо-Сервис»"
             it[inn] = "0000000000"
             it[licenseNo] = "№ 000-демо"
+            it[address] = "420000, г. Казань, ул. Управляющая, д. 10, офис 1"
             it[representative] = "Генеральный директор Иванов И. И. (демо)"
             it[exchangeMethod] = "email: uk-demo@example.ru"
             it[isDemo] = true

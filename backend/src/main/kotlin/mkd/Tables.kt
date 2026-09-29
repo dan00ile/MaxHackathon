@@ -17,6 +17,7 @@ object ManagementCompanies : LongIdTable("management_companies") {
     val name = text("name")
     val inn = varchar("inn", 12)
     val licenseNo = text("license_no")
+    val address = text("address").default("")          // адрес для шапки мотивированного отказа
     val representative = text("representative")        // ФИО/должность представителя (FR-G2)
     val exchangeMethod = text("exchange_method")       // согласованный способ обмена, напр. "email: uk@example.ru"
     val isDemo = bool("is_demo").default(true)
