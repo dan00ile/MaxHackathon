@@ -1,9 +1,0 @@
-**/build
-**/.gradle
-.git
-.idea
-docs
-webapp
-demo
-data
-.env
